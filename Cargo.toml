@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ofa-protocol",
     "crates/ofa-core",
+    "crates/ofa-cli",
 ]
 
 [workspace.package]

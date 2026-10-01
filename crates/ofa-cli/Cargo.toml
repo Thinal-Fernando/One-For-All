@@ -1,0 +1,15 @@
+[package]
+name = "ofa-cli"
+description = "ofa.exe: forwards agent hooks and terminal jobs to the OFA app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ofa"
+path = "src/main.rs"
+
+[dependencies]
+ofa-protocol.workspace = true
+clap = { version = "4", features = ["derive"] }
