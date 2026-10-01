@@ -1,0 +1,9 @@
+[package]
+name = "ofa-core"
+description = "Session state machine for OFA (pure logic)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

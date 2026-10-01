@@ -1,0 +1,9 @@
+[package]
+name = "ofa-protocol"
+description = "Event and API types shared by the OFA app and ofa.exe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
