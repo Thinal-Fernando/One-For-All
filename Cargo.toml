@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/desktop/src-tauri",
     "crates/ofa-protocol",
     "crates/ofa-core",
     "crates/ofa-cli",
