@@ -5,7 +5,9 @@
 //! events at all, so it can't notice the cursor arriving. Instead, a background
 //! thread polls the cursor position and compares it with the area the UI
 //! reports as solid. The same thread runs the always-on-top watchdog and
-//! hides the island while a full-screen app is in front.
+//! hides the island while a full-screen app is in front. About once a
+//! second it also checks the island is still at the top centre of the
+//! primary monitor, which moves when monitors or scaling change.
 
 use std::sync::Mutex;
 use std::thread;
@@ -31,6 +33,9 @@ const CLOSE_DELAY: Duration = Duration::from_millis(300);
 
 /// Check for a full-screen app every this many ticks, about 4 times a second.
 const FULLSCREEN_EVERY: u32 = 8;
+
+/// Check the island's position every this many ticks, about once a second.
+const PLACE_EVERY: u32 = 30;
 
 /// A rectangle in CSS pixels, relative to the window's top-left corner.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -75,7 +80,11 @@ pub fn set_hit_area(state: tauri::State<'_, IslandState>, x: f64, y: f64, width:
 }
 
 /// Places the island at the top centre of the primary monitor and records
-/// where it went.
+/// where it went. Does nothing if it is already there.
+///
+/// Windows moves windows itself when a monitor is plugged in or removed, and
+/// a scaling change resizes the window, so this compares against where the
+/// window really is rather than where it was last put.
 pub fn place_top_centre(window: &WebviewWindow) -> tauri::Result<()> {
     let Some(monitor) = window.primary_monitor()? else {
         return Ok(());
@@ -87,13 +96,15 @@ pub fn place_top_centre(window: &WebviewWindow) -> tauri::Result<()> {
         area.x + (screen.width as i32 - size.width as i32) / 2,
         area.y,
     );
-    window.set_position(origin)?;
+    if window.outer_position()? != origin {
+        window.set_position(origin)?;
+    }
 
+    // The webview scales CSS pixels by the factor of the monitor the window
+    // is on. Once the window is in place, that's the primary monitor's.
+    let scale = window.scale_factor()?;
     let state = window.state::<IslandState>();
-    *state.placement.lock().unwrap() = Some(Placement {
-        origin,
-        scale: monitor.scale_factor(),
-    });
+    *state.placement.lock().unwrap() = Some(Placement { origin, scale });
     Ok(())
 }
 
@@ -131,6 +142,12 @@ fn poll(app: AppHandle, window: WebviewWindow) {
 
         if let Some(watchdog) = &mut watchdog {
             watchdog.tick();
+        }
+
+        if tick.is_multiple_of(PLACE_EVERY) {
+            if let Err(err) = place_top_centre(&window) {
+                eprintln!("island: could not place the island: {err}");
+            }
         }
 
         if let Some(hwnd) = hwnd.filter(|_| tick.is_multiple_of(FULLSCREEN_EVERY)) {
