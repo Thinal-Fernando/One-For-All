@@ -1,5 +1,7 @@
+mod api;
 mod fullscreen;
 mod island;
+mod sessions;
 mod topmost;
 
 use tauri::Manager;
@@ -8,13 +10,22 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .manage(island::IslandState::default())
-        .invoke_handler(tauri::generate_handler![island::set_hit_area])
+        .manage(sessions::Sessions::default())
+        .invoke_handler(tauri::generate_handler![
+            island::set_hit_area,
+            sessions::get_sessions
+        ])
         .setup(|app| {
             let window = app
                 .get_webview_window(island::ISLAND)
                 .expect("island window is declared in tauri.conf.json");
             island::place_top_centre(&window)?;
             island::start(app.handle(), window.clone())?;
+            sessions::start(app.handle())?;
+            // Without the API the island still runs, it just hears nothing.
+            if let Err(err) = api::start(app.handle()) {
+                eprintln!("api: not started: {err}");
+            }
             window.show()?;
             Ok(())
         })
