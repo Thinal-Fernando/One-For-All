@@ -2205,6 +2205,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ofa-protocol",
+ "serde",
+ "serde_json",
+ "windows",
 ]
 
 [[package]]
