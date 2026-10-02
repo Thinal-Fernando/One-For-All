@@ -2192,6 +2192,9 @@ dependencies = [
 [[package]]
 name = "ofa-core"
 version = "0.1.0"
+dependencies = [
+ "ofa-protocol",
+]
 
 [[package]]
 name = "ofa-desktop"
