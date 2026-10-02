@@ -4,7 +4,8 @@
 //! it never blocks the app behind it. A click-through window gets no mouse
 //! events at all, so it can't notice the cursor arriving. Instead, a background
 //! thread polls the cursor position and compares it with the area the UI
-//! reports as solid. The same thread runs the always-on-top watchdog.
+//! reports as solid. The same thread runs the always-on-top watchdog and
+//! hides the island while a full-screen app is in front.
 
 use std::sync::Mutex;
 use std::thread;
@@ -14,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
-use crate::topmost;
+use crate::{fullscreen, topmost};
 
 /// Label of the single island window, as declared in tauri.conf.json.
 pub const ISLAND: &str = "island";
@@ -27,6 +28,9 @@ const TICK: Duration = Duration::from_millis(33);
 
 /// How long the island stays open after the cursor leaves it.
 const CLOSE_DELAY: Duration = Duration::from_millis(300);
+
+/// Check for a full-screen app every this many ticks, about 4 times a second.
+const FULLSCREEN_EVERY: u32 = 8;
 
 /// A rectangle in CSS pixels, relative to the window's top-left corner.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -105,25 +109,44 @@ pub fn start(app: &AppHandle, window: WebviewWindow) -> tauri::Result<()> {
 
 fn poll(app: AppHandle, window: WebviewWindow) {
     let state = app.state::<IslandState>();
-    let mut watchdog = match window.hwnd() {
-        Ok(hwnd) => Some(topmost::Watchdog::new(hwnd)),
+    let hwnd = match window.hwnd() {
+        Ok(hwnd) => Some(hwnd),
         Err(err) => {
-            eprintln!("island: no window handle, so no on-top watchdog: {err}");
+            eprintln!(
+                "island: no window handle, so no on-top watchdog or full-screen hiding: {err}"
+            );
             None
         }
     };
+    let mut watchdog = hwnd.map(topmost::Watchdog::new);
+    let mut hidden = false;
     let mut click_through = true;
     let mut open = false;
     let mut last_inside = Instant::now();
+    let mut tick: u32 = 0;
 
     loop {
         thread::sleep(TICK);
+        tick = tick.wrapping_add(1);
 
         if let Some(watchdog) = &mut watchdog {
             watchdog.tick();
         }
 
-        let inside = cursor_inside(&state);
+        if let Some(hwnd) = hwnd.filter(|_| tick.is_multiple_of(FULLSCREEN_EVERY)) {
+            let full_screen = fullscreen::in_front_of(hwnd);
+            if full_screen != hidden {
+                hidden = full_screen;
+                let result = if hidden { window.hide() } else { window.show() };
+                if let Err(err) = result {
+                    eprintln!("island: could not hide or show for full screen: {err}");
+                }
+            }
+        }
+
+        // While hidden the island can't be hovered, so it closes as if the
+        // cursor had left.
+        let inside = !hidden && cursor_inside(&state);
 
         // Clicks must pass through the moment the cursor leaves, even while
         // the island is still closing, or the empty part of the window
