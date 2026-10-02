@@ -47,10 +47,14 @@ pub fn to_event(input: HookInput, pid: Option<u32>) -> Option<Event> {
         },
         // The tool ran or was refused, so any prompt has been answered.
         "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => working("Thinking"),
+        // Runs the moment the permission prompt appears. OFA never answers it
+        // (no output), so the terminal shows its prompt as usual. It doesn't
+        // say what is waiting, so the island keeps the command from the
+        // PreToolUse event just before.
+        "PermissionRequest" => EventKind::NeedsYou { detail: None },
         "Notification" => match input.notification_type.as_deref() {
-            // The message only names the tool; the island keeps the command
-            // from the PreToolUse event that came just before.
-            Some("permission_prompt") => EventKind::NeedsYou { detail: None },
+            // Claude Code sends "permission_prompt" only after the prompt has
+            // waited a few seconds, so PermissionRequest is used instead.
             Some("elicitation_dialog" | "elicitation_url_dialog") => EventKind::NeedsYou {
                 detail: Some("Waiting for your answer".into()),
             },
@@ -212,16 +216,22 @@ mod tests {
     #[test]
     fn a_permission_prompt_needs_you() {
         let k = kind(json!({
-            "hook_event_name": "Notification",
-            "notification_type": "permission_prompt",
-            "message": "Claude needs your permission to use Bash"
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "test2", "content": ""},
+            "tool_use_id": "toolu_1"
         }));
         assert_eq!(k, Some(EventKind::NeedsYou { detail: None }));
     }
 
     #[test]
     fn idle_and_other_notifications_are_ignored() {
-        for t in ["idle_prompt", "auth_success", "agent_completed"] {
+        for t in [
+            "permission_prompt",
+            "idle_prompt",
+            "auth_success",
+            "agent_completed",
+        ] {
             let k = kind(json!({"hook_event_name": "Notification", "notification_type": t}));
             assert_eq!(k, None, "{t}");
         }
