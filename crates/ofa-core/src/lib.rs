@@ -67,6 +67,8 @@ pub struct Session {
     pub key: SessionKey,
     pub title: Option<String>,
     pub pid: Option<u32>,
+    /// The agent's session log, used to notice a refused prompt or Esc.
+    pub transcript: Option<String>,
     pub state: SessionState,
     /// One short line about what is happening, such as the waiting command.
     pub detail: Option<String>,
@@ -118,6 +120,7 @@ impl Store {
                     key,
                     title: None,
                     pid: None,
+                    transcript: None,
                     state: SessionState::Idle,
                     detail: None,
                     since: now,
@@ -132,6 +135,9 @@ impl Store {
         }
         if event.title.is_some() {
             session.title = event.title;
+        }
+        if event.transcript_path.is_some() {
+            session.transcript = event.transcript_path;
         }
 
         let next = match event.kind {
@@ -228,6 +234,23 @@ impl Store {
         changed
     }
 
+    /// The agent stopped mid-turn because you refused a prompt or pressed
+    /// Esc. It sends no event for that, so the caller spots it another way.
+    /// A busy or waiting session goes back to Idle; others are left alone.
+    /// Returns whether anything changed.
+    pub fn interrupt(&mut self, key: &SessionKey, now: Instant) -> bool {
+        let Some(s) = self.sessions.iter_mut().find(|s| &s.key == key) else {
+            return false;
+        };
+        if !matches!(s.state, SessionState::Working | SessionState::NeedsYou) {
+            return false;
+        }
+        s.state = SessionState::Idle;
+        s.detail = None;
+        s.since = now;
+        true
+    }
+
     /// Clears a Failed or Lost session you have seen. Returns whether it existed.
     pub fn dismiss(&mut self, key: &SessionKey) -> bool {
         let before = self.sessions.len();
@@ -260,6 +283,7 @@ mod tests {
             session_id: id.into(),
             pid: None,
             title: None,
+            transcript_path: None,
             kind,
         }
     }
@@ -437,6 +461,45 @@ mod tests {
     }
 
     #[test]
+    fn refusing_a_prompt_or_pressing_esc_goes_idle() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", needs_you("rm build")), t);
+        assert!(store.interrupt(&key("a"), t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::Idle));
+        assert_eq!(store.sessions()[0].detail, None);
+        assert_eq!(store.island_state(), Idle);
+
+        store.apply(event("a", working("x")), t);
+        assert!(store.interrupt(&key("a"), t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::Idle));
+    }
+
+    #[test]
+    fn an_interrupt_leaves_finished_sessions_alone() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", EventKind::TurnFinished), t);
+        assert!(!store.interrupt(&key("a"), t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::Done));
+        assert!(!store.interrupt(&key("missing"), t));
+    }
+
+    #[test]
+    fn the_transcript_path_sticks() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        let mut first = event("a", EventKind::SessionStarted);
+        first.transcript_path = Some("C:/t/a.jsonl".into());
+        store.apply(first, t);
+        store.apply(event("a", working("x")), t);
+        assert_eq!(
+            store.sessions()[0].transcript.as_deref(),
+            Some("C:/t/a.jsonl")
+        );
+    }
+
+    #[test]
     fn failed_stays_until_dismissed() {
         let t = Instant::now();
         let mut store = Store::new();
@@ -519,6 +582,7 @@ mod tests {
             session_id: id.into(),
             pid: Some(99),
             title: Some("cargo test".into()),
+            transcript_path: None,
             kind: EventKind::JobFinished {
                 exit_code,
                 duration_ms,

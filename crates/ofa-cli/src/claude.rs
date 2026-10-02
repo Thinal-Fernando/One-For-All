@@ -19,6 +19,8 @@ pub struct HookInput {
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<Value>,
@@ -73,6 +75,7 @@ pub fn to_event(input: HookInput, pid: Option<u32>) -> Option<Event> {
         session_id: input.session_id,
         pid,
         title: input.cwd.as_deref().and_then(folder_name),
+        transcript_path: input.transcript_path,
         kind,
     })
 }
@@ -164,6 +167,9 @@ mod tests {
         assert_eq!(event.session_id, "a3b53514-721f-404a-9bd0-ce46a2fa0cd0");
         assert_eq!(event.pid, Some(18516));
         assert_eq!(event.title.as_deref(), Some("one-for-all"));
+        assert!(event
+            .transcript_path
+            .is_some_and(|p| p.ends_with("a3b5.jsonl")));
         assert_eq!(event.kind, EventKind::SessionStarted);
     }
 

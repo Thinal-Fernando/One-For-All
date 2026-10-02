@@ -4,6 +4,7 @@ mod fullscreen;
 mod island;
 mod sessions;
 mod topmost;
+mod transcript;
 
 use tauri::Manager;
 

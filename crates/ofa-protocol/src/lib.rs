@@ -61,6 +61,10 @@ pub struct Event {
     /// Short name for the island, usually the project folder or command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The agent's session log, if it keeps one. Claude Code sends no event
+    /// when you refuse a prompt or press Esc, but it writes a line here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
     #[serde(flatten)]
     pub kind: EventKind,
 }
@@ -130,6 +134,7 @@ mod tests {
             session_id: "abc".into(),
             pid: Some(4242),
             title: Some("one-for-all".into()),
+            transcript_path: None,
             kind: EventKind::NeedsYou {
                 detail: Some("npm test".into()),
             },
@@ -159,6 +164,7 @@ mod tests {
         .unwrap();
         assert_eq!(event.pid, None);
         assert_eq!(event.title, None);
+        assert_eq!(event.transcript_path, None);
         assert_eq!(event.kind, EventKind::Working { detail: None });
     }
 

@@ -1,15 +1,18 @@
 //! The live session store, and how it reaches the UI.
 //!
 //! Events from the local API go into one [`ofa_core::Store`]. A background
-//! thread moves it on as time passes and checks every 10 seconds that each
-//! agent's process is still alive. Whenever anything changes, the full list
-//! is sent to the UI.
+//! thread moves it on as time passes, watches busy sessions' transcripts for
+//! a refused prompt or Esc, and checks every 10 seconds that each agent's
+//! process is still alive. Whenever anything changes, the full list is sent
+//! to the UI.
 
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ofa_core::{SessionState, Store};
+use ofa_core::{SessionKey, SessionState, Store};
 use ofa_protocol::{Event, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -20,6 +23,7 @@ use windows::Win32::System::Threading::{
 
 use crate::focus;
 use crate::island::ISLAND;
+use crate::transcript;
 
 /// Event sent to the UI with the full session list whenever it changes.
 pub const SESSIONS_EVENT: &str = "sessions";
@@ -28,7 +32,11 @@ const EXPIRE_EVERY: Duration = Duration::from_secs(1);
 const REAP_EVERY: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
-pub struct Sessions(Mutex<Store>);
+pub struct Sessions {
+    store: Mutex<Store>,
+    /// How far into each session's transcript has been read.
+    read_to: Mutex<HashMap<SessionKey, u64>>,
+}
 
 /// One session as the UI sees it.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -43,14 +51,78 @@ pub struct SessionView {
 impl Sessions {
     /// Applies an event from the local API and tells the UI if it changed anything.
     pub fn apply(&self, app: &AppHandle, event: Event) {
-        let changed = self.0.lock().unwrap().apply(event, Instant::now());
+        let key = SessionKey {
+            source: event.source,
+            id: event.session_id.clone(),
+        };
+        let mut store = self.store.lock().unwrap();
+        let changed = store.apply(event, Instant::now());
+        let transcript = store
+            .sessions()
+            .iter()
+            .find(|s| s.key == key)
+            .and_then(|s| s.transcript.clone());
+        drop(store);
+
+        // Whatever the transcript says from here on is newer than this event.
+        let mut read_to = self.read_to.lock().unwrap();
+        match transcript.and_then(|path| transcript::end_of(Path::new(&path))) {
+            Some(end) => read_to.insert(key, end),
+            None => read_to.remove(&key),
+        };
+        drop(read_to);
+
         if changed {
             self.publish(app);
         }
     }
 
+    /// Reads what busy or waiting sessions appended to their transcripts and
+    /// sends any that were stopped by you back to Idle. Returns whether
+    /// anything changed.
+    fn check_transcripts(&self, now: Instant) -> bool {
+        let watched: Vec<(SessionKey, String)> = {
+            let store = self.store.lock().unwrap();
+            let mut read_to = self.read_to.lock().unwrap();
+            read_to.retain(|key, _| store.sessions().iter().any(|s| &s.key == key));
+            store
+                .sessions()
+                .iter()
+                .filter(|s| matches!(s.state, SessionState::Working | SessionState::NeedsYou))
+                .filter_map(|s| Some((s.key.clone(), s.transcript.clone()?)))
+                .collect()
+        };
+
+        let mut stopped = Vec::new();
+        for (key, path) in watched {
+            let path = Path::new(&path);
+            let Some(offset) = self.read_to.lock().unwrap().get(&key).copied() else {
+                continue;
+            };
+            if transcript::end_of(path) == Some(offset) {
+                continue;
+            }
+            match transcript::read_new(path, offset) {
+                Ok((lines, end)) => {
+                    self.read_to.lock().unwrap().insert(key.clone(), end);
+                    if transcript::was_interrupted(&lines) {
+                        stopped.push(key);
+                    }
+                }
+                Err(err) => eprintln!("sessions: could not read {}: {err}", path.display()),
+            }
+        }
+
+        let mut store = self.store.lock().unwrap();
+        let mut changed = false;
+        for key in &stopped {
+            changed |= store.interrupt(key, now);
+        }
+        changed
+    }
+
     pub fn views(&self) -> Vec<SessionView> {
-        self.0
+        self.store
             .lock()
             .unwrap()
             .sessions()
@@ -67,7 +139,7 @@ impl Sessions {
 
     /// The process of the session the UI calls `view_id`.
     fn pid_of(&self, view_id: &str) -> Option<u32> {
-        let store = self.0.lock().unwrap();
+        let store = self.store.lock().unwrap();
         store
             .sessions()
             .iter()
@@ -96,7 +168,8 @@ pub fn focus_session(sessions: tauri::State<'_, Sessions>, id: String) -> bool {
     sessions.pid_of(&id).is_some_and(focus::bring_to_front)
 }
 
-/// Starts the thread that runs the timers and the process check.
+/// Starts the thread that runs the timers, the transcript watch and the
+/// process check.
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
     let app = app.clone();
     thread::Builder::new()
@@ -107,8 +180,9 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
             loop {
                 thread::sleep(EXPIRE_EVERY);
                 let now = Instant::now();
-                let mut store = sessions.0.lock().unwrap();
-                let mut changed = store.expire(now);
+                let mut changed = sessions.check_transcripts(now);
+                let mut store = sessions.store.lock().unwrap();
+                changed |= store.expire(now);
                 if now.duration_since(last_reap) >= REAP_EVERY {
                     last_reap = now;
                     changed |= store.reap(now, is_alive);
