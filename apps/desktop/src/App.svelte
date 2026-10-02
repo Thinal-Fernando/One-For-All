@@ -2,7 +2,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
-  import { runDemo } from "./lib/demo";
   import { LABELS, islandState, type Session } from "./lib/sessions";
 
   // The Rust side polls the cursor and tells us when to open, because a
@@ -33,12 +32,18 @@
       open = event.payload;
     });
 
-    const stopDemo = runDemo((next) => (sessions = next));
+    // Listen first, then fetch, so no change can slip in between.
+    const unlistenSessions = listen<Session[]>("sessions", (event) => {
+      sessions = event.payload;
+    });
+    unlistenSessions.then(() =>
+      invoke<Session[]>("get_sessions").then((current) => (sessions = current)),
+    );
 
     return () => {
       observer.disconnect();
       unlisten.then((stop) => stop());
-      stopDemo();
+      unlistenSessions.then((stop) => stop());
     };
   });
 </script>
@@ -220,6 +225,10 @@
 
   .mark.done {
     background: var(--green);
+  }
+
+  .mark.lost {
+    background: #6b7280;
   }
 
   .needs-you.label,

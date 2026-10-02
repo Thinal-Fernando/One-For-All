@@ -1,8 +1,7 @@
-// What the island knows about each agent session or terminal job.
-// Mirrors ofa-core's states; the real list comes from the Rust session store
-// in milestone 3.
+// What the island knows about each agent session or terminal job. Matches
+// SessionView in src-tauri/src/sessions.rs, which sends the full list.
 
-export type SessionState = "needs-you" | "failed" | "working" | "done" | "idle";
+export type SessionState = "needs-you" | "failed" | "working" | "done" | "idle" | "lost";
 
 export interface Session {
   id: string;
@@ -17,11 +16,16 @@ export interface Session {
 /** Most urgent first, the same order as ofa-core's IslandState. */
 const PRIORITY: SessionState[] = ["needs-you", "failed", "working", "done", "idle"];
 
-/** The state the island shows: the most urgent across all sessions. */
+/**
+ * The state the island shows: the most urgent across all sessions. A lost
+ * session is listed in the panel but doesn't light up the island.
+ */
 export function islandState(sessions: Session[]): SessionState {
   let best = PRIORITY.length - 1;
   for (const session of sessions) {
-    best = Math.min(best, PRIORITY.indexOf(session.state));
+    if (session.state !== "lost") {
+      best = Math.min(best, PRIORITY.indexOf(session.state));
+    }
   }
   return PRIORITY[best];
 }
@@ -32,4 +36,5 @@ export const LABELS: Record<SessionState, string> = {
   working: "Working",
   done: "Done",
   idle: "Idle",
+  lost: "Lost",
 };
