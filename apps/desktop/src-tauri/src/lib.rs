@@ -1,4 +1,5 @@
 mod api;
+mod focus;
 mod fullscreen;
 mod island;
 mod sessions;
@@ -13,7 +14,8 @@ pub fn run() {
         .manage(sessions::Sessions::default())
         .invoke_handler(tauri::generate_handler![
             island::set_hit_area,
-            sessions::get_sessions
+            sessions::get_sessions,
+            sessions::focus_session
         ])
         .setup(|app| {
             let window = app

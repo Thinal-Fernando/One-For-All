@@ -59,13 +59,19 @@
   {#if open}
     <ul class="panel">
       {#each active as session (session.id)}
-        <li class="row">
-          <span class="mark {session.state}"></span>
-          <span class="text">
-            <span class="title">{session.title}</span>
-            <span class="detail">{session.source} · {session.detail}</span>
-          </span>
-          <span class="state {session.state}">{LABELS[session.state]}</span>
+        <li>
+          <button
+            class="row"
+            title="Show this session's terminal"
+            onclick={() => invoke("focus_session", { id: session.id })}
+          >
+            <span class="mark {session.state}"></span>
+            <span class="text">
+              <span class="title">{session.title}</span>
+              <span class="detail">{session.source} · {session.detail}</span>
+            </span>
+            <span class="state {session.state}">{LABELS[session.state]}</span>
+          </button>
         </li>
       {:else}
         <li class="empty">Nothing running</li>
@@ -164,7 +170,22 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    width: 100%;
     min-width: 0;
+    margin: -4px -6px;
+    padding: 4px 6px;
+    box-sizing: content-box;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .row:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .text {

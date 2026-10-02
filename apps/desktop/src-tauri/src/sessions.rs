@@ -18,6 +18,7 @@ use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
+use crate::focus;
 use crate::island::ISLAND;
 
 /// Event sent to the UI with the full session list whenever it changes.
@@ -64,6 +65,16 @@ impl Sessions {
             .collect()
     }
 
+    /// The process of the session the UI calls `view_id`.
+    fn pid_of(&self, view_id: &str) -> Option<u32> {
+        let store = self.0.lock().unwrap();
+        store
+            .sessions()
+            .iter()
+            .find(|s| format!("{}:{}", source_name(s.key.source), s.key.id) == view_id)
+            .and_then(|s| s.pid)
+    }
+
     fn publish(&self, app: &AppHandle) {
         if let Err(err) = app.emit_to(ISLAND, SESSIONS_EVENT, self.views()) {
             eprintln!("sessions: could not send to the UI: {err}");
@@ -76,6 +87,13 @@ impl Sessions {
 #[tauri::command]
 pub fn get_sessions(sessions: tauri::State<'_, Sessions>) -> Vec<SessionView> {
     sessions.views()
+}
+
+/// Brings the clicked session's terminal to the front. Returns whether a
+/// window was found.
+#[tauri::command]
+pub fn focus_session(sessions: tauri::State<'_, Sessions>, id: String) -> bool {
+    sessions.pid_of(&id).is_some_and(focus::bring_to_front)
 }
 
 /// Starts the thread that runs the timers and the process check.
