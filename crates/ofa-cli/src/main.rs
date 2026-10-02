@@ -6,8 +6,10 @@
 mod claude;
 mod client;
 mod process;
+mod setup;
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -30,8 +32,12 @@ enum Command {
     },
     /// Install or remove OFA's hooks in Claude Code's settings.
     Setup {
+        /// Remove OFA's hooks instead.
         #[arg(long)]
         uninstall: bool,
+        /// Settings file to change, instead of ~/.claude/settings.json.
+        #[arg(long, value_name = "FILE")]
+        settings: Option<PathBuf>,
     },
     /// Show the helper's version and where it expects the OFA app.
     Status,
@@ -56,11 +62,48 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Command::Run { .. } | Command::Setup { .. } => {
+        Command::Setup {
+            uninstall,
+            settings,
+        } => match run_setup(uninstall, settings) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("ofa setup: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Run { .. } => {
             eprintln!("ofa: not implemented yet");
             ExitCode::from(2)
         }
     }
+}
+
+fn run_setup(uninstall: bool, settings: Option<PathBuf>) -> Result<(), String> {
+    let path = settings
+        .or_else(setup::settings_path)
+        .ok_or("couldn't find your Claude Code settings folder")?;
+    let exe = std::env::current_exe().map_err(|err| format!("couldn't find ofa.exe: {err}"))?;
+    let done = setup::run(&path, &exe, uninstall)?;
+
+    let what = if uninstall {
+        "removed from"
+    } else {
+        "added to"
+    };
+    if done.changed {
+        println!("OFA's hooks were {what} {}", done.settings.display());
+    } else {
+        println!("Nothing to change in {}", done.settings.display());
+    }
+    if let Some(backup) = done.backup {
+        println!("Backup of the old file: {}", backup.display());
+    }
+    if !uninstall {
+        println!("Hooks run {}", exe.display());
+        println!("New Claude Code sessions will show on the island.");
+    }
+    Ok(())
 }
 
 /// Reads one Claude Code hook event from stdin and forwards it to the app.
