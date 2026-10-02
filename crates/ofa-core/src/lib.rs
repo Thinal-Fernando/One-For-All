@@ -138,7 +138,12 @@ impl Store {
             // Only creates the session; a late start must not reset its state.
             EventKind::SessionStarted => None,
             EventKind::Working { detail } => Some((SessionState::Working, detail)),
-            EventKind::NeedsYou { detail } => Some((SessionState::NeedsYou, detail)),
+            // Claude Code's permission notice doesn't say what is waiting, but
+            // the tool event just before it did, so keep that line.
+            EventKind::NeedsYou { detail } => Some((
+                SessionState::NeedsYou,
+                detail.or_else(|| session.detail.clone()),
+            )),
             EventKind::TurnFinished => Some((SessionState::Done, None)),
             EventKind::Failed { detail } => Some((SessionState::Failed, detail)),
             EventKind::JobFinished {
@@ -328,6 +333,16 @@ mod tests {
 
         store.apply(event("a", EventKind::SessionEnded), t);
         assert!(store.sessions().is_empty());
+    }
+
+    #[test]
+    fn a_prompt_without_detail_keeps_the_waiting_command() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", working("npm test")), t);
+        store.apply(event("a", EventKind::NeedsYou { detail: None }), t);
+        assert_eq!(store.sessions()[0].state, SessionState::NeedsYou);
+        assert_eq!(store.sessions()[0].detail.as_deref(), Some("npm test"));
     }
 
     #[test]
