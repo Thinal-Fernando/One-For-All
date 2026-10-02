@@ -4,7 +4,7 @@
 //! it never blocks the app behind it. A click-through window gets no mouse
 //! events at all, so it can't notice the cursor arriving. Instead, a background
 //! thread polls the cursor position and compares it with the area the UI
-//! reports as solid.
+//! reports as solid. The same thread runs the always-on-top watchdog.
 
 use std::sync::Mutex;
 use std::thread;
@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+use crate::topmost;
 
 /// Label of the single island window, as declared in tauri.conf.json.
 pub const ISLAND: &str = "island";
@@ -96,19 +98,30 @@ pub fn start(app: &AppHandle, window: WebviewWindow) -> tauri::Result<()> {
     window.set_ignore_cursor_events(true)?;
     let app = app.clone();
     thread::Builder::new()
-        .name("island-hover".into())
-        .spawn(move || poll_cursor(app, window))?;
+        .name("island".into())
+        .spawn(move || poll(app, window))?;
     Ok(())
 }
 
-fn poll_cursor(app: AppHandle, window: WebviewWindow) {
+fn poll(app: AppHandle, window: WebviewWindow) {
     let state = app.state::<IslandState>();
+    let mut watchdog = match window.hwnd() {
+        Ok(hwnd) => Some(topmost::Watchdog::new(hwnd)),
+        Err(err) => {
+            eprintln!("island: no window handle, so no on-top watchdog: {err}");
+            None
+        }
+    };
     let mut click_through = true;
     let mut open = false;
     let mut last_inside = Instant::now();
 
     loop {
         thread::sleep(TICK);
+
+        if let Some(watchdog) = &mut watchdog {
+            watchdog.tick();
+        }
 
         let inside = cursor_inside(&state);
 
