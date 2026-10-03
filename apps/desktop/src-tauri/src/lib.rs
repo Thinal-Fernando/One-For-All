@@ -3,6 +3,7 @@ mod focus;
 mod fullscreen;
 mod island;
 mod sessions;
+mod shortcuts;
 mod topmost;
 mod transcript;
 
@@ -26,6 +27,7 @@ pub fn run() {
             island::place_top_centre(&window)?;
             island::start(app.handle(), window.clone())?;
             sessions::start(app.handle())?;
+            shortcuts::start(app.handle())?;
             // Without the API the island still runs, it just hears nothing.
             if let Err(err) = api::start(app.handle()) {
                 eprintln!("api: not started: {err}");

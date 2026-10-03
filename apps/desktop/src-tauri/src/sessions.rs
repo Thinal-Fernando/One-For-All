@@ -166,6 +166,23 @@ impl Sessions {
         Ok(())
     }
 
+    /// Answers the prompt that has waited longest, for the keyboard shortcuts.
+    pub fn answer_longest_waiting(&self, app: &AppHandle, allow: bool) -> Result<(), String> {
+        let target = {
+            let store = self.store.lock().unwrap();
+            let waiting = self.waiting.lock().unwrap();
+            store
+                .sessions()
+                .iter()
+                .filter(|s| waiting.get(&s.key).is_some_and(|(p, _)| *p == s.prompt))
+                .filter(|s| store.is_waiting_on(&s.key, s.prompt))
+                .min_by_key(|s| s.since)
+                .map(|s| (view_id(&s.key), s.prompt))
+        };
+        let (id, prompt) = target.ok_or("nothing is waiting for an answer")?;
+        self.answer(app, &id, prompt, allow)
+    }
+
     /// Tells hooks whose prompt is no longer waiting to step aside.
     fn release_answered(&self) {
         let store = self.store.lock().unwrap();
