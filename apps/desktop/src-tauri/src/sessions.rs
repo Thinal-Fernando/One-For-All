@@ -5,15 +5,21 @@
 //! a refused prompt or Esc, and checks every 10 seconds that each agent's
 //! process is still alive. Whenever anything changes, the full list is sent
 //! to the UI.
+//!
+//! A permission prompt can also wait here for your answer: `ofa hook` holds
+//! the request open, and a click on the island (or a shortcut) answers it.
+//! If the prompt is answered in the terminal instead, the waiting hook is
+//! told to step aside.
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use ofa_core::{SessionKey, SessionState, Store};
-use ofa_protocol::{Event, Source};
+use ofa_protocol::{Decision, Event, EventKind, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, STILL_ACTIVE};
@@ -31,11 +37,21 @@ pub const SESSIONS_EVENT: &str = "sessions";
 const EXPIRE_EVERY: Duration = Duration::from_secs(1);
 const REAP_EVERY: Duration = Duration::from_secs(10);
 
+/// Longest a hook waits for an answer from the island. The terminal prompt
+/// stays usable all along, and Claude Code gives up on the hook after an hour.
+const MAX_WAIT: Duration = Duration::from_secs(55 * 60);
+
+/// A hook waiting for an answer: the prompt it is for, and where to send it.
+/// `None` tells it to step aside.
+type Waiter = (u64, Sender<Option<Decision>>);
+
 #[derive(Default)]
 pub struct Sessions {
     store: Mutex<Store>,
     /// How far into each session's transcript has been read.
     read_to: Mutex<HashMap<SessionKey, u64>>,
+    /// Hooks waiting for an answer, by session.
+    waiting: Mutex<HashMap<SessionKey, Waiter>>,
 }
 
 /// One session as the UI sees it.
@@ -46,6 +62,10 @@ pub struct SessionView {
     pub title: String,
     pub state: &'static str,
     pub detail: String,
+    /// Which prompt is showing, sent back with an answer.
+    pub prompt: u64,
+    /// Whether an answer from the island can reach this session's prompt.
+    pub answerable: bool,
 }
 
 impl Sessions {
@@ -75,6 +95,90 @@ impl Sessions {
         if changed {
             self.publish(app);
         }
+    }
+
+    /// Records a permission prompt and waits until you answer it on the
+    /// island. Returns `None` if it was answered elsewhere first, or if the
+    /// wait ran out.
+    pub fn wait_for_answer(&self, app: &AppHandle, event: Event) -> Option<Decision> {
+        if !matches!(event.kind, EventKind::NeedsYou { .. }) {
+            return None;
+        }
+        let key = SessionKey {
+            source: event.source,
+            id: event.session_id.clone(),
+        };
+        self.apply(app, event);
+
+        let (sender, answer) = mpsc::channel();
+        let prompt = {
+            let store = self.store.lock().unwrap();
+            let prompt = store.sessions().iter().find(|s| s.key == key)?.prompt;
+            if !store.is_waiting_on(&key, prompt) {
+                return None;
+            }
+            let mut waiting = self.waiting.lock().unwrap();
+            if let Some((_, older)) = waiting.insert(key.clone(), (prompt, sender)) {
+                let _ = older.send(None);
+            }
+            prompt
+        };
+        // Now that a hook is waiting, the UI can offer Allow and Deny.
+        self.publish(app);
+
+        let decision = answer.recv_timeout(MAX_WAIT).ok().flatten();
+        // A newer prompt for the same session has a higher number; leave it.
+        let mut waiting = self.waiting.lock().unwrap();
+        if waiting.get(&key).is_some_and(|(p, _)| *p == prompt) {
+            waiting.remove(&key);
+        }
+        decision
+    }
+
+    /// Answers prompt number `prompt` of the session the UI calls `view_id`.
+    /// Fails if that prompt was already answered, or no hook is waiting on it.
+    pub fn answer(
+        &self,
+        app: &AppHandle,
+        view_id: &str,
+        prompt: u64,
+        allow: bool,
+    ) -> Result<(), String> {
+        let key = self.key_of(view_id).ok_or("that session has ended")?;
+        {
+            let mut store = self.store.lock().unwrap();
+            let mut waiting = self.waiting.lock().unwrap();
+            let Some((waiting_on, _)) = waiting.get(&key) else {
+                return Err("that prompt can't be answered from here".into());
+            };
+            if *waiting_on != prompt || !store.answered(&key, prompt, allow, Instant::now()) {
+                return Err("that prompt was already answered".into());
+            }
+            let (_, sender) = waiting.remove(&key).expect("checked above");
+            let decision = if allow {
+                Decision::Allow
+            } else {
+                Decision::Deny
+            };
+            let _ = sender.send(Some(decision));
+        }
+        self.publish(app);
+        Ok(())
+    }
+
+    /// Tells hooks whose prompt is no longer waiting to step aside.
+    fn release_answered(&self) {
+        let store = self.store.lock().unwrap();
+        self.waiting
+            .lock()
+            .unwrap()
+            .retain(|key, (prompt, sender)| {
+                let still_waiting = store.is_waiting_on(key, *prompt);
+                if !still_waiting {
+                    let _ = sender.send(None);
+                }
+                still_waiting
+            });
     }
 
     /// Reads what busy or waiting sessions appended to their transcripts and
@@ -122,32 +226,46 @@ impl Sessions {
     }
 
     pub fn views(&self) -> Vec<SessionView> {
-        self.store
-            .lock()
-            .unwrap()
+        let store = self.store.lock().unwrap();
+        let waiting = self.waiting.lock().unwrap();
+        store
             .sessions()
             .iter()
             .map(|s| SessionView {
-                id: format!("{}:{}", source_name(s.key.source), s.key.id),
+                id: view_id(&s.key),
                 source: source_label(s.key.source),
                 title: s.title.clone().unwrap_or_else(|| s.key.id.clone()),
                 state: state_name(s.state),
                 detail: s.detail.clone().unwrap_or_default(),
+                prompt: s.prompt,
+                answerable: s.state == SessionState::NeedsYou
+                    && waiting.get(&s.key).is_some_and(|(p, _)| *p == s.prompt),
             })
             .collect()
     }
 
-    /// The process of the session the UI calls `view_id`.
-    fn pid_of(&self, view_id: &str) -> Option<u32> {
+    /// The session the UI calls `id`.
+    fn key_of(&self, id: &str) -> Option<SessionKey> {
         let store = self.store.lock().unwrap();
         store
             .sessions()
             .iter()
-            .find(|s| format!("{}:{}", source_name(s.key.source), s.key.id) == view_id)
+            .find(|s| view_id(&s.key) == id)
+            .map(|s| s.key.clone())
+    }
+
+    /// The process of the session the UI calls `id`.
+    fn pid_of(&self, id: &str) -> Option<u32> {
+        let store = self.store.lock().unwrap();
+        store
+            .sessions()
+            .iter()
+            .find(|s| view_id(&s.key) == id)
             .and_then(|s| s.pid)
     }
 
     fn publish(&self, app: &AppHandle) {
+        self.release_answered();
         if let Err(err) = app.emit_to(ISLAND, SESSIONS_EVENT, self.views()) {
             eprintln!("sessions: could not send to the UI: {err}");
         }
@@ -159,6 +277,18 @@ impl Sessions {
 #[tauri::command]
 pub fn get_sessions(sessions: tauri::State<'_, Sessions>) -> Vec<SessionView> {
     sessions.views()
+}
+
+/// Answers a permission prompt from the island.
+#[tauri::command]
+pub fn answer_prompt(
+    app: AppHandle,
+    sessions: tauri::State<'_, Sessions>,
+    id: String,
+    prompt: u64,
+    allow: bool,
+) -> Result<(), String> {
+    sessions.answer(&app, &id, prompt, allow)
 }
 
 /// Brings the clicked session's terminal to the front. Returns whether a
@@ -213,6 +343,11 @@ fn is_alive(pid: u32) -> bool {
         let _ = CloseHandle(handle);
         alive
     }
+}
+
+/// How the UI names a session: "claude-code:<id>".
+fn view_id(key: &SessionKey) -> String {
+    format!("{}:{}", source_name(key.source), key.id)
 }
 
 fn source_name(source: Source) -> &'static str {

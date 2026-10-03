@@ -116,10 +116,20 @@ fn hook() -> Result<(), String> {
     let input = input.trim_start_matches('\u{feff}');
     let input: claude::HookInput =
         serde_json::from_str(input).map_err(|err| format!("unexpected hook input: {err}"))?;
+    let is_permission_prompt = input.hook_event_name == "PermissionRequest";
     let Some(event) = claude::to_event(input, process::agent_pid("claude.exe")) else {
         return Ok(());
     };
-    client::send(&event)
+    if !is_permission_prompt {
+        return client::send(&event);
+    }
+
+    // Wait for an answer on the island while the terminal shows its own
+    // prompt. Printing nothing leaves the decision to the terminal.
+    if let Some(decision) = client::ask(&event)? {
+        println!("{}", claude::permission_reply(decision));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

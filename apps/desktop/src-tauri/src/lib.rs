@@ -16,7 +16,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             island::set_hit_area,
             sessions::get_sessions,
-            sessions::focus_session
+            sessions::focus_session,
+            sessions::answer_prompt
         ])
         .setup(|app| {
             let window = app

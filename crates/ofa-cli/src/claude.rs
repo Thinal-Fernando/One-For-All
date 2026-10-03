@@ -6,9 +6,9 @@
 
 use std::path::Path;
 
-use ofa_protocol::{Event, EventKind, Source};
+use ofa_protocol::{Decision, Event, EventKind, Source};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// The parts of a hook's input OFA uses. Every event carries `session_id`,
 /// `cwd` and `hook_event_name`; the rest depend on the event.
@@ -80,6 +80,22 @@ pub fn to_event(input: HookInput, pid: Option<u32>) -> Option<Event> {
     })
 }
 
+/// What `ofa hook` prints to answer a `PermissionRequest`, in the shape
+/// Claude Code reads from a hook's stdout.
+pub fn permission_reply(decision: Decision) -> String {
+    let decision = match decision {
+        Decision::Allow => json!({"behavior": "allow"}),
+        Decision::Deny => json!({"behavior": "deny", "message": "Denied from the OFA island."}),
+    };
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": decision
+        }
+    })
+    .to_string()
+}
+
 /// "one-for-all" from "C:\Users\me\project\one-for-all".
 fn folder_name(cwd: &str) -> Option<String> {
     Path::new(cwd)
@@ -136,7 +152,6 @@ fn shorten(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     /// Builds hook input shaped like what Claude Code 2.1.193 really sent.
     fn input(extra: Value) -> HookInput {
@@ -228,6 +243,21 @@ mod tests {
             "tool_use_id": "toolu_1"
         }));
         assert_eq!(k, Some(EventKind::NeedsYou { detail: None }));
+    }
+
+    #[test]
+    fn replies_in_the_shape_claude_code_reads() {
+        let allow: Value = serde_json::from_str(&permission_reply(Decision::Allow)).unwrap();
+        assert_eq!(
+            allow,
+            json!({"hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "allow"}
+            }})
+        );
+        let deny: Value = serde_json::from_str(&permission_reply(Decision::Deny)).unwrap();
+        assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(deny["hookSpecificOutput"]["decision"]["message"].is_string());
     }
 
     #[test]

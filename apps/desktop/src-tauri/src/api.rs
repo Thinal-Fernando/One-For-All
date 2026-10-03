@@ -4,13 +4,20 @@
 //! `%APPDATA%\OFA\token`, which the app creates on first run. The Host header
 //! is checked too, so a web page can't reach the API by pointing its own
 //! domain name at 127.0.0.1.
+//!
+//! Each request is handled on its own short-lived thread, because a
+//! permission request stays open until you answer it.
 
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::Arc;
 use std::thread;
 
-use ofa_protocol::{Event, Health, EVENTS_PATH, HEALTH_PATH, MAX_BODY_BYTES, PROTOCOL_VERSION};
+use ofa_protocol::{
+    Event, Health, PermissionAnswer, EVENTS_PATH, HEALTH_PATH, MAX_BODY_BYTES, PERMISSION_PATH,
+    PROTOCOL_VERSION,
+};
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Request, Response, Server};
 
@@ -24,29 +31,39 @@ const TOKEN_BYTES: usize = 32;
 pub fn start(app: &AppHandle) -> io::Result<()> {
     let path = ofa_protocol::token_path()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "APPDATA is not set"))?;
-    let token = load_or_create_token(&path)?;
+    let token: Arc<str> = load_or_create_token(&path)?.into();
 
     let server = Server::http(ofa_protocol::api_addr()).map_err(io::Error::other)?;
     let app = app.clone();
     thread::Builder::new().name("api".into()).spawn(move || {
-        for mut request in server.incoming_requests() {
-            let (status, json) = route(&app, &token, &mut request);
-            let response = match json {
-                Some(json) => Response::from_string(json)
-                    .with_status_code(status)
-                    .with_header(
-                        Header::from_bytes("Content-Type", "application/json")
-                            .expect("static header is valid"),
-                    )
-                    .boxed(),
-                None => Response::empty(status).boxed(),
-            };
-            if let Err(err) = request.respond(response) {
-                eprintln!("api: could not answer: {err}");
+        for request in server.incoming_requests() {
+            let (app, token) = (app.clone(), token.clone());
+            let handled = thread::Builder::new()
+                .name("api-request".into())
+                .spawn(move || handle(&app, &token, request));
+            if let Err(err) = handled {
+                eprintln!("api: could not start a request thread: {err}");
             }
         }
     })?;
     Ok(())
+}
+
+fn handle(app: &AppHandle, token: &str, mut request: Request) {
+    let (status, json) = route(app, token, &mut request);
+    let response = match json {
+        Some(json) => Response::from_string(json)
+            .with_status_code(status)
+            .with_header(
+                Header::from_bytes("Content-Type", "application/json")
+                    .expect("static header is valid"),
+            )
+            .boxed(),
+        None => Response::empty(status).boxed(),
+    };
+    if let Err(err) = request.respond(response) {
+        eprintln!("api: could not answer: {err}");
+    }
 }
 
 /// Reads the token, or writes a fresh one if there is none yet or the file
@@ -87,32 +104,44 @@ fn route(app: &AppHandle, token: &str, request: &mut Request) -> (u16, Option<St
             };
             (200, serde_json::to_string(&health).ok())
         }
-        (Method::Post, EVENTS_PATH) => {
-            if !authorized(header(request, "Authorization"), token) {
-                return (401, None);
+        (Method::Post, EVENTS_PATH) => match read_event(request, token) {
+            Ok(event) => {
+                app.state::<Sessions>().apply(app, event);
+                (204, None)
             }
-            let mut body = Vec::new();
-            let read = request
-                .as_reader()
-                .take(MAX_BODY_BYTES as u64 + 1)
-                .read_to_end(&mut body);
-            if read.is_err() {
-                return (400, None);
+            Err(status) => (status, None),
+        },
+        (Method::Post, PERMISSION_PATH) => match read_event(request, token) {
+            Ok(event) => {
+                let decision = app.state::<Sessions>().wait_for_answer(app, event);
+                (
+                    200,
+                    serde_json::to_string(&PermissionAnswer { decision }).ok(),
+                )
             }
-            if body.len() > MAX_BODY_BYTES {
-                return (413, None);
-            }
-            match serde_json::from_slice::<Event>(&body) {
-                Ok(event) => {
-                    app.state::<Sessions>().apply(app, event);
-                    (204, None)
-                }
-                Err(_) => (400, None),
-            }
-        }
-        (_, HEALTH_PATH | EVENTS_PATH) => (405, None),
+            Err(status) => (status, None),
+        },
+        (_, HEALTH_PATH | EVENTS_PATH | PERMISSION_PATH) => (405, None),
         _ => (404, None),
     }
+}
+
+/// Checks the token and reads one event from the body, or gives the error
+/// status to answer with.
+fn read_event(request: &mut Request, token: &str) -> Result<Event, u16> {
+    if !authorized(header(request, "Authorization"), token) {
+        return Err(401);
+    }
+    let mut body = Vec::new();
+    request
+        .as_reader()
+        .take(MAX_BODY_BYTES as u64 + 1)
+        .read_to_end(&mut body)
+        .map_err(|_| 400u16)?;
+    if body.len() > MAX_BODY_BYTES {
+        return Err(413);
+    }
+    serde_json::from_slice(&body).map_err(|_| 400)
 }
 
 fn header<'a>(request: &'a Request, name: &'static str) -> Option<&'a str> {

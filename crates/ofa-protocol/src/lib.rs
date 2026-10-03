@@ -19,6 +19,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Takes one [`Event`] as JSON. Needs the token.
 pub const EVENTS_PATH: &str = "/events";
 
+/// Takes one [`EventKind::NeedsYou`] event and holds the request open until
+/// you answer that prompt on the island, then replies with a
+/// [`PermissionAnswer`]. If the prompt is answered elsewhere first, the reply
+/// carries no decision. Needs the token.
+pub const PERMISSION_PATH: &str = "/permission";
+
 /// Answers with [`Health`]. Needs no token, so the helper can tell "app not
 /// running" apart from "wrong token".
 pub const HEALTH_PATH: &str = "/health";
@@ -98,6 +104,21 @@ pub enum EventKind {
     JobFinished { exit_code: i32, duration_ms: u64 },
     /// The session closed normally.
     SessionEnded,
+}
+
+/// Your answer to a permission prompt, given on the island.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Decision {
+    Allow,
+    Deny,
+}
+
+/// Reply to `POST /permission`. `decision` is `None` when the prompt was
+/// answered somewhere else, so the hook should step aside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionAnswer {
+    pub decision: Option<Decision>,
 }
 
 /// Body of `GET /health`.
@@ -185,6 +206,19 @@ mod tests {
                 duration_ms: 42_000
             }
         );
+    }
+
+    #[test]
+    fn permission_answer_wire_format() {
+        let allow = PermissionAnswer {
+            decision: Some(Decision::Allow),
+        };
+        assert_eq!(
+            serde_json::to_value(allow).unwrap(),
+            json!({"decision": "allow"})
+        );
+        let none: PermissionAnswer = serde_json::from_value(json!({"decision": null})).unwrap();
+        assert_eq!(none.decision, None);
     }
 
     #[test]

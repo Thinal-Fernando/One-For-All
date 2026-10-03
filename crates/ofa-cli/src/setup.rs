@@ -26,8 +26,19 @@ pub const EVENTS: [&str; 11] = [
     "SessionEnd",
 ];
 
-/// Seconds Claude Code waits for a hook. `ofa hook` finishes in well under one.
+/// Seconds Claude Code waits for a hook. `ofa hook` finishes in well under
+/// one, except on a permission prompt, where it waits for your answer on the
+/// island while the terminal shows its own prompt.
 const TIMEOUT_SECS: u64 = 5;
+const PERMISSION_TIMEOUT_SECS: u64 = 60 * 60;
+
+fn timeout_for(event: &str) -> u64 {
+    if event == "PermissionRequest" {
+        PERMISSION_TIMEOUT_SECS
+    } else {
+        TIMEOUT_SECS
+    }
+}
 
 /// What `run` did, for the message printed afterwards.
 pub struct Outcome {
@@ -116,7 +127,7 @@ fn add_hooks(settings: Value, exe: &str) -> Value {
                     "type": "command",
                     "command": exe,
                     "args": ["hook"],
-                    "timeout": TIMEOUT_SECS
+                    "timeout": timeout_for(event)
                 }]
             }));
         }
@@ -211,14 +222,25 @@ mod tests {
         json!({"type": "command", "command": EXE, "args": ["hook"], "timeout": TIMEOUT_SECS})
     }
 
+    fn ofa_handler_for(event: &str) -> Value {
+        json!({"type": "command", "command": EXE, "args": ["hook"], "timeout": timeout_for(event)})
+    }
+
     #[test]
     fn adds_one_hook_per_event_to_empty_settings() {
         let out = add_hooks(json!({}), EXE);
         let hooks = out["hooks"].as_object().unwrap();
         assert_eq!(hooks.len(), EVENTS.len());
         for event in EVENTS {
-            assert_eq!(out["hooks"][event], json!([{"hooks": [ofa_handler()]}]));
+            assert_eq!(
+                out["hooks"][event],
+                json!([{"hooks": [ofa_handler_for(event)]}])
+            );
         }
+        assert_eq!(
+            out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+            PERMISSION_TIMEOUT_SECS
+        );
     }
 
     #[test]
@@ -235,7 +257,7 @@ mod tests {
         assert_eq!(out["hooks"]["PreToolUse"][0], mine);
         assert_eq!(
             out["hooks"]["PreToolUse"][1],
-            json!({"hooks": [ofa_handler()]})
+            json!({"hooks": [ofa_handler_for("PreToolUse")]})
         );
         assert_eq!(out["hooks"]["PreCompact"], json!([mine]));
     }
