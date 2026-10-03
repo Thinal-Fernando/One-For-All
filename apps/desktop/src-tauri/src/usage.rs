@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,7 +31,10 @@ pub const USAGE_EVENT: &str = "usage";
 const SCAN_EVERY: Duration = Duration::from_secs(60);
 
 /// How often to ask Claude for exact usage, when that is switched on.
-const PLAN_EVERY_SCANS: u32 = 2;
+const PLAN_EVERY_SECS: i64 = 2 * 60;
+
+/// The longest wait between tries while Claude keeps refusing.
+const PLAN_MAX_BACKOFF_SECS: i64 = 16 * 60;
 
 /// How long a last good answer from Claude is shown while new ones fail.
 const PLAN_STALE_AFTER_SECS: i64 = 10 * 60;
@@ -60,6 +64,42 @@ impl UsageView {
 #[derive(Default)]
 pub struct Usage {
     latest: Mutex<UsageView>,
+    /// Wakes the usage thread early, after a settings change.
+    wake: Mutex<Option<Sender<()>>>,
+}
+
+/// Re-reads the usage now instead of at the next minute, so switching exact
+/// usage on or off shows at once.
+pub fn refresh(app: &AppHandle) {
+    if let Some(wake) = &*app.state::<Usage>().wake.lock().unwrap() {
+        let _ = wake.send(());
+    }
+}
+
+/// When to next ask Claude for exact usage. Claude refuses (429) if asked
+/// too often, so a failure waits twice as long as the one before, and the
+/// last good answer is kept while the opt-in is off, so switching it off and
+/// on again shows that answer instead of asking again.
+#[derive(Debug, Default)]
+struct PlanSchedule {
+    next_at: i64,
+    backoff: i64,
+}
+
+impl PlanSchedule {
+    fn due(&self, now: i64) -> bool {
+        now >= self.next_at
+    }
+
+    fn succeeded(&mut self, now: i64) {
+        self.backoff = 0;
+        self.next_at = now + PLAN_EVERY_SECS;
+    }
+
+    fn failed(&mut self, now: i64) {
+        self.backoff = (self.backoff * 2).clamp(PLAN_EVERY_SECS, PLAN_MAX_BACKOFF_SECS);
+        self.next_at = now + self.backoff;
+    }
 }
 
 /// Lets the UI ask for the estimate when it starts.
@@ -74,25 +114,31 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
         eprintln!("usage: no Claude Code folder found, so no usage estimate");
         return Ok(());
     };
+    let (wake, woken) = mpsc::channel();
+    *app.state::<Usage>().wake.lock().unwrap() = Some(wake);
     let app = app.clone();
     thread::Builder::new().name("usage".into()).spawn(move || {
         let mut scanner = Scanner::default();
         let mut plan_usage: Option<(PlanUsage, i64)> = None;
-        let mut scans: u32 = 0;
+        let mut schedule = PlanSchedule::default();
         loop {
             let now = unix_now();
             scanner.scan(&root, now);
-            if !plan::enabled() {
-                plan_usage = None;
-            } else if scans.is_multiple_of(PLAN_EVERY_SCANS) {
+            let enabled = plan::enabled();
+            if enabled && schedule.due(now) {
                 match plan::fetch() {
-                    Ok(fresh) => plan_usage = Some((fresh, now)),
-                    Err(err) => eprintln!("usage: no exact usage from Claude: {err}"),
+                    Ok(fresh) => {
+                        plan_usage = Some((fresh, now));
+                        schedule.succeeded(now);
+                    }
+                    Err(err) => {
+                        eprintln!("usage: no exact usage from Claude: {err}");
+                        schedule.failed(now);
+                    }
                 }
             }
-            scans = scans.wrapping_add(1);
             let plan = plan_usage
-                .filter(|(_, at)| now - at < PLAN_STALE_AFTER_SECS)
+                .filter(|(_, at)| enabled && now - at < PLAN_STALE_AFTER_SECS)
                 .map(|(p, _)| p);
             let view = UsageView::new(usage::summarize(&scanner.entries(), now), plan);
             let state = app.state::<Usage>();
@@ -107,7 +153,8 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
                     eprintln!("usage: could not send to the UI: {err}");
                 }
             }
-            thread::sleep(SCAN_EVERY);
+            // A settings change wakes this early, so the switch shows at once.
+            let _ = woken.recv_timeout(SCAN_EVERY);
         }
     })?;
     Ok(())
@@ -283,6 +330,25 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_usage_backs_off_while_refused_and_resets_on_success() {
+        let mut s = PlanSchedule::default();
+        assert!(s.due(0));
+        s.failed(0);
+        assert!(!s.due(PLAN_EVERY_SECS - 1));
+        assert!(s.due(PLAN_EVERY_SECS));
+        s.failed(120);
+        assert_eq!(s.next_at, 120 + 2 * PLAN_EVERY_SECS);
+        for _ in 0..10 {
+            s.failed(1000);
+        }
+        assert_eq!(s.next_at, 1000 + PLAN_MAX_BACKOFF_SECS);
+        s.succeeded(5000);
+        assert_eq!(s.next_at, 5000 + PLAN_EVERY_SECS);
+        s.failed(5200);
+        assert_eq!(s.next_at, 5200 + PLAN_EVERY_SECS);
+    }
 
     // Trimmed from a real Claude Code 2.1 log line.
     const LINE: &str = r#"{"type":"assistant","timestamp":"2026-10-02T04:22:40.292Z","requestId":"req_011","message":{"id":"msg_011","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":31192,"cache_read_input_tokens":52127,"output_tokens":491}}}"#;

@@ -10,6 +10,13 @@ body {
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 }
 
+/* The settings window is an ordinary window with its own background. */
+html.settings-window,
+html.settings-window body {
+  background: #0f1012;
+  color-scheme: dark;
+}
+
 #app {
   height: 100%;
   display: flex;

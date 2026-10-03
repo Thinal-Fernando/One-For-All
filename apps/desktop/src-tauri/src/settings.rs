@@ -2,19 +2,26 @@
 //!
 //! The file is read each time a setting is needed, so a change applies
 //! within a second or two without restarting. Anything missing or invalid
-//! falls back to its default. A settings window replaces hand editing later.
+//! falls back to its default. The settings window edits the same file, and
+//! keeps any keys it doesn't know about.
 
 use std::path::PathBuf;
 
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+
+use crate::{island, usage};
+
+/// The settings window's label.
+pub const SETTINGS: &str = "settings";
 
 /// Smallest and largest orb, in CSS pixels.
 pub const MIN_ORB: u32 = 16;
 pub const MAX_ORB: u32 = 64;
 const DEFAULT_ORB: u32 = 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Settings {
     /// Read exact plan usage from Claude with Claude Code's sign-in.
     pub exact_usage: bool,
@@ -22,7 +29,7 @@ pub struct Settings {
 }
 
 /// Where the orb sits and how big it is.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct IslandSettings {
     pub edge: Edge,
     pub size: u32,
@@ -39,7 +46,7 @@ impl Default for IslandSettings {
 
 /// The screen edge the orb sits on: halfway down the right or left edge, or
 /// in the middle of the top edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Edge {
     #[default]
@@ -73,6 +80,91 @@ fn parse(text: &str) -> Settings {
         exact_usage: root["exact_usage"].as_bool().unwrap_or(false),
         island: IslandSettings { edge, size },
     }
+}
+
+/// Writes `settings` over the file's copies of them, keeping everything else
+/// in the file as it was.
+fn save(settings: Settings) -> std::io::Result<()> {
+    let path = path().ok_or_else(|| std::io::Error::other("no settings folder"))?;
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = merge(&old, settings);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    // Write beside it and swap, so a reader never sees half a file.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, &path)
+}
+
+/// `old`'s JSON with the settings OFA knows about replaced by `settings`.
+fn merge(old: &str, settings: Settings) -> String {
+    let mut root = match serde_json::from_str(old.trim_start_matches('\u{feff}')) {
+        Ok(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    let size = settings.island.size.clamp(MIN_ORB, MAX_ORB);
+    root.insert("exact_usage".into(), json!(settings.exact_usage));
+    root.insert(
+        "island".into(),
+        json!({ "edge": settings.island.edge, "size": size }),
+    );
+    let mut text = serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default();
+    text.push('\n');
+    text
+}
+
+/// Lets the settings window show what is set now.
+#[tauri::command]
+pub fn get_settings() -> Settings {
+    load()
+}
+
+/// Saves the settings window's changes and applies them straight away.
+#[tauri::command]
+pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+    save(settings).map_err(|err| format!("could not save the settings: {err}"))?;
+    if let Some(window) = app.get_webview_window(island::ISLAND) {
+        island::place(&window).map_err(|err| err.to_string())?;
+    }
+    usage::refresh(&app);
+    Ok(())
+}
+
+/// Opens the settings window, or brings it forward if it is already open.
+///
+/// Async on purpose: on Windows, creating a window from a sync command
+/// deadlocks the webview and the window stays blank.
+#[tauri::command]
+pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    show_window(&app).map_err(|err| err.to_string())
+}
+
+fn show_window(app: &AppHandle) -> tauri::Result<()> {
+    let window = match app.get_webview_window(SETTINGS) {
+        Some(window) => window,
+        None => build_window(app)?,
+    };
+    window.unminimize()?;
+    window.show()?;
+    // The click comes from the island, which never takes focus, so Windows
+    // won't let the new window come forward on its own and it would open
+    // behind whatever you were using. Pinning it on top for a moment does.
+    window.set_always_on_top(true)?;
+    window.set_focus()?;
+    window.set_always_on_top(false)
+}
+
+fn build_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
+        .title("OFA Settings")
+        .inner_size(420.0, 470.0)
+        .resizable(false)
+        .maximizable(false)
+        .theme(Some(tauri::Theme::Dark))
+        .center()
+        .focused(true)
+        .build()
 }
 
 fn path() -> Option<PathBuf> {
@@ -114,6 +206,26 @@ mod tests {
     fn a_size_out_of_range_is_clamped() {
         assert_eq!(parse(r#"{"island": {"size": 2}}"#).island.size, MIN_ORB);
         assert_eq!(parse(r#"{"island": {"size": 500}}"#).island.size, MAX_ORB);
+    }
+
+    #[test]
+    fn saving_keeps_unknown_keys_and_round_trips() {
+        let new = Settings {
+            exact_usage: true,
+            island: IslandSettings {
+                edge: Edge::Left,
+                size: 99,
+            },
+        };
+        let text = merge(r#"{"later": 1, "exact_usage": false}"#, new);
+        let root: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(root["later"], 1);
+        let back = parse(&text);
+        assert!(back.exact_usage);
+        assert_eq!(back.island.edge, Edge::Left);
+        assert_eq!(back.island.size, MAX_ORB);
+        // A broken file is replaced rather than kept.
+        assert_eq!(parse(&merge("not json", new)), back);
     }
 
     #[test]

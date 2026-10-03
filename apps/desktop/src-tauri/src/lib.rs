@@ -24,6 +24,9 @@ pub fn run() {
             sessions::get_sessions,
             sessions::focus_session,
             sessions::answer_prompt,
+            settings::get_settings,
+            settings::save_settings,
+            settings::open_settings,
             usage::get_usage
         ])
         .setup(|app| {

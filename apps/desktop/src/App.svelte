@@ -130,7 +130,9 @@
         : layout.edge === "left"
           ? { x: 0, y, width: x + s, height: s }
           : { x, y: 0, width: s, height: y + s };
-    if (phase !== "rest" && pop) {
+    // Once it starts closing only the orb counts again, so passing back over
+    // where the pop-up was doesn't bring it back.
+    if ((phase === "sinking" || phase === "open") && pop) {
       // The pop-up's laid-out box, not its on-screen one: it grows from a
       // small scale as it opens, and a box measured mid-grow would leave
       // most of it outside the hit area, so hovering it would close it.
@@ -227,76 +229,89 @@
     role="dialog"
     aria-label="OFA details"
   >
-    <div class="pop-head">
-      <b>Claude Code</b>
-      <span>
-        {active.length ? `${active.length} session${active.length > 1 ? "s" : ""}` : "Nothing running"}
-      </span>
-    </div>
-    <ul class="rows">
-      {#each active as session (session.id)}
-        <li class="item">
-          <button
-            class="row"
-            title={session.answerable ? undefined : "Show this session's terminal"}
-            onclick={() => invoke("focus_session", { id: session.id })}
-          >
-            <span class="mark {session.state}"></span>
-            <span class="text">
-              <span class="title">{session.title}</span>
-              <span class="detail">{session.source} · {session.detail}</span>
-            </span>
-            {#if !session.answerable}
-              <span class="state {session.state}">{LABELS[session.state]}</span>
-            {/if}
-          </button>
-          {#if session.answerable}
-            <span class="answers">
-              <button class="answer deny" onclick={() => answer(session, false)}>Deny</button>
-              <button class="answer allow" onclick={() => answer(session, true)}>Allow</button>
-            </span>
-          {/if}
-        </li>
-      {:else}
-        <li class="empty">No Claude Code sessions right now</li>
-      {/each}
-    </ul>
-    {#if usage?.plan}
-      {@const session = usage.plan.session}
-      {@const weekly = usage.plan.weekly}
-      <div class="plan">
-        <div class="plan-head">
-          <span>Claude plan · 5-hour limit</span>
-          <span>
-            {Math.round(session.percent)}% used{session.resets_at
-              ? ` · resets ${clockTime(session.resets_at, now)}`
-              : ""}
-          </span>
-        </div>
-        <div class="bar">
-          <div
-            class="fill {level(session.percent)}"
-            style="width: {Math.min(100, session.percent)}%"
-          ></div>
-        </div>
-        {#if weekly}
-          <div class="plan-week">
-            Weekly {Math.round(weekly.percent)}%{weekly.resets_at
-              ? ` · resets ${clockTime(weekly.resets_at, now)}`
-              : ""}
-          </div>
-        {/if}
+    <!-- The card has a round bite out of its bottom-right corner, and the
+         settings button sits in that bite as its own little piece. -->
+    <div class="card">
+      <div class="pop-head">
+        <b>Claude Code</b>
+        <span>
+          {active.length ? `${active.length} session${active.length > 1 ? "s" : ""}` : "Nothing running"}
+        </span>
       </div>
-    {:else if usage && (usage.window_tokens > 0 || usage.week_tokens > 0)}
-      <p class="usage" title="Estimated from Claude Code's logs on this PC">
-        {#if usage.window_resets_at}
-          {tokens(usage.window_tokens)} tokens this window · {resetsIn(usage.window_resets_at, now)}
+      <ul class="rows">
+        {#each active as session (session.id)}
+          <li class="item">
+            <button
+              class="row"
+              title={session.answerable ? undefined : "Show this session's terminal"}
+              onclick={() => invoke("focus_session", { id: session.id })}
+            >
+              <span class="mark {session.state}"></span>
+              <span class="text">
+                <span class="title">{session.title}</span>
+                <span class="detail">{session.source} · {session.detail}</span>
+              </span>
+              {#if !session.answerable}
+                <span class="state {session.state}">{LABELS[session.state]}</span>
+              {/if}
+            </button>
+            {#if session.answerable}
+              <span class="answers">
+                <button class="answer deny" onclick={() => answer(session, false)}>Deny</button>
+                <button class="answer allow" onclick={() => answer(session, true)}>Allow</button>
+              </span>
+            {/if}
+          </li>
         {:else}
-          No usage window open
-        {/if}
-        · {tokens(usage.week_tokens)} in 7 days
-      </p>
-    {/if}
+          <li class="empty">No Claude Code sessions right now</li>
+        {/each}
+      </ul>
+      {#if usage?.plan}
+        {@const session = usage.plan.session}
+        {@const weekly = usage.plan.weekly}
+        <div class="plan">
+          <div class="plan-head">
+            <span>Claude plan · 5-hour limit</span>
+            <span>
+              {Math.round(session.percent)}% used{session.resets_at
+                ? ` · resets ${clockTime(session.resets_at, now)}`
+                : ""}
+            </span>
+          </div>
+          <div class="bar">
+            <div
+              class="fill {level(session.percent)}"
+              style="width: {Math.min(100, session.percent)}%"
+            ></div>
+          </div>
+          {#if weekly}
+            <div class="plan-week">
+              Weekly {Math.round(weekly.percent)}%{weekly.resets_at
+                ? ` · resets ${clockTime(weekly.resets_at, now)}`
+                : ""}
+            </div>
+          {/if}
+        </div>
+      {:else if usage && (usage.window_tokens > 0 || usage.week_tokens > 0)}
+        <p class="usage" title="Estimated from Claude Code's logs on this PC">
+          {#if usage.window_resets_at}
+            {tokens(usage.window_tokens)} tokens this window · {resetsIn(usage.window_resets_at, now)}
+          {:else}
+            No usage window open
+          {/if}
+          · {tokens(usage.week_tokens)} in 7 days
+        </p>
+      {/if}
+    </div>
+    <button class="gear" title="Settings" aria-label="Settings" onclick={() => invoke("open_settings")}>
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <path
+          fill="currentColor"
+          fill-rule="evenodd"
+          d="M5.98 3.21 L6.61 1.14 L9.39 1.14 L10.02 3.21 L11.14 3.85 L13.25 3.37 L14.64 5.77 L13.16 7.36 L13.16 8.64 L14.64 10.23 L13.25 12.63 L11.14 12.15 L10.02 12.79 L9.39 14.86 L6.61 14.86 L5.98 12.79 L4.86 12.15 L2.75 12.63 L1.36 10.23 L2.84 8.64 L2.84 7.36 L1.36 5.77 L2.75 3.37 L4.86 3.85 Z M8 5.6 A2.4 2.4 0 1 0 8 10.4 A2.4 2.4 0 1 0 8 5.6 Z"
+        />
+      </svg>
+    </button>
   </div>
 </div>
 
@@ -394,7 +409,7 @@
       0 6px 18px rgba(0, 0, 0, 0.35);
   }
   .orb.idle .dot {
-    animation: flicker 3.2s steps(1, end) infinite;
+    animation: rest-breathe 4s ease-in-out infinite;
     box-shadow: none;
   }
   .orb.working .dot {
@@ -404,28 +419,16 @@
     animation: breathe 1.8s ease-in-out infinite;
   }
 
-  @keyframes flicker {
+  /* Idle: a slow, soft fade in and out, like breathing while asleep. */
+  @keyframes rest-breathe {
     0%,
     100% {
-      opacity: 0.85;
-    }
-    8% {
+      transform: scale(0.8);
       opacity: 0.35;
     }
-    11% {
-      opacity: 0.85;
-    }
-    46% {
-      opacity: 0.6;
-    }
-    49% {
-      opacity: 0.85;
-    }
-    72% {
-      opacity: 0.3;
-    }
-    74% {
-      opacity: 0.8;
+    50% {
+      transform: scale(1);
+      opacity: 0.9;
     }
   }
 
@@ -456,18 +459,17 @@
   }
 
   /* ---------- the pop-up ---------- */
+  /* The pop-up is two pieces, the card and the settings button, drawn with
+     one outline and shadow that follow the bite in the card. */
   .pop {
+    --gear: 26px;
+    --gap: 3px;
     position: absolute;
     width: 340px;
     max-height: calc(100% - 24px);
-    background: #0b0c0e;
-    border-radius: 20px;
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.09),
-      0 18px 40px rgba(0, 0, 0, 0.45);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    filter: drop-shadow(0 0 0.6px rgba(255, 255, 255, 0.4)) drop-shadow(0 18px 20px rgba(0, 0, 0, 0.45));
     opacity: 0;
     transform: scale(0.15);
     pointer-events: none;
@@ -480,6 +482,67 @@
     opacity: 1;
     transform: scale(1);
     pointer-events: auto;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    background: #0b0c0e;
+    border-radius: 20px;
+    /* The bite: a circle the button's size plus a gap, centred on the button. */
+    mask: radial-gradient(
+      circle calc(var(--gear) / 2 + var(--gap)) at right calc(var(--gear) / 2) bottom calc(var(--gear) / 2),
+      transparent calc(var(--gear) / 2 + var(--gap) - 0.5px),
+      #000 calc(var(--gear) / 2 + var(--gap))
+    );
+  }
+
+  .gear {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    width: var(--gear);
+    height: var(--gear);
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: #0b0c0e;
+    color: var(--pop-muted);
+    cursor: pointer;
+    transition:
+      color 150ms ease,
+      background 150ms ease;
+  }
+
+  .gear:hover {
+    background: #1b1d21;
+    color: #f1f2f4;
+  }
+
+  .gear svg {
+    transition: transform 400ms ease;
+  }
+
+  .gear:hover svg {
+    transform: rotate(60deg);
+  }
+
+  /* Keep content out of the bite. */
+  .rows:last-child {
+    padding-bottom: calc(var(--gear) + var(--gap));
+  }
+
+  .bar,
+  .plan-week {
+    margin-right: calc(var(--gear) - 10px);
+  }
+
+  .card .usage {
+    padding-right: calc(var(--gear) + var(--gap) + 8px);
   }
 
   .pop-head {

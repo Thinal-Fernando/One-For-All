@@ -88,7 +88,9 @@ If the orb doesn't react, `ofa hook` logs why:
 Get-Content "$env:LOCALAPPDATA\OFA\hook-errors.log" -Tail 10
 ```
 
-Settings live in `%APPDATA%\OFA\settings.json` and apply within a second or two:
+To change settings, hover the orb and click the gear in the pop-up. Changes
+apply straight away. They are kept in `%APPDATA%\OFA\settings.json`, which you
+can also edit by hand (changes there apply within a second or two):
 
 ```json
 {
