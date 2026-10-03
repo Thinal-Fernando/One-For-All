@@ -11,6 +11,14 @@
   let island: HTMLDivElement;
 
   const current = $derived(islandState(sessions));
+
+  // Answers go back with the prompt's number, so a click that arrives after
+  // the prompt was answered in the terminal is ignored rather than misfiring.
+  function answer(session: Session, allow: boolean) {
+    invoke("answer_prompt", { id: session.id, prompt: session.prompt, allow }).catch(
+      (err) => console.warn("OFA: answer not sent:", err),
+    );
+  }
   const active = $derived(sessions.filter((s) => s.state !== "idle"));
 
   onMount(() => {
@@ -59,10 +67,10 @@
   {#if open}
     <ul class="panel">
       {#each active as session (session.id)}
-        <li>
+        <li class="item">
           <button
             class="row"
-            title="Show this session's terminal"
+            title={session.answerable ? undefined : "Show this session's terminal"}
             onclick={() => invoke("focus_session", { id: session.id })}
           >
             <span class="mark {session.state}"></span>
@@ -70,8 +78,16 @@
               <span class="title">{session.title}</span>
               <span class="detail">{session.source} · {session.detail}</span>
             </span>
-            <span class="state {session.state}">{LABELS[session.state]}</span>
+            {#if !session.answerable}
+              <span class="state {session.state}">{LABELS[session.state]}</span>
+            {/if}
           </button>
+          {#if session.answerable}
+            <span class="answers">
+              <button class="answer deny" onclick={() => answer(session, false)}>Deny</button>
+              <button class="answer allow" onclick={() => answer(session, true)}>Allow</button>
+            </span>
+          {/if}
         </li>
       {:else}
         <li class="empty">Nothing running</li>
@@ -170,7 +186,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 100%;
+    flex: 1;
     min-width: 0;
     margin: -4px -6px;
     padding: 4px 6px;
@@ -186,6 +202,43 @@
 
   .row:hover {
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .answers {
+    flex: none;
+    display: flex;
+    gap: 6px;
+  }
+
+  .answer {
+    border: 0;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .answer.allow {
+    background: var(--amber);
+    color: #000;
+  }
+
+  .answer.deny {
+    background: rgba(255, 255, 255, 0.12);
+    color: #f2f2f2;
+  }
+
+  .answer:hover {
+    filter: brightness(1.15);
   }
 
   .text {

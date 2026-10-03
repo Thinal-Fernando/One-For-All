@@ -11,6 +11,10 @@ export interface Session {
   state: SessionState;
   /** One short line about what is happening, such as the waiting command. */
   detail: string;
+  /** Which permission prompt is showing; sent back with an answer. */
+  prompt: number;
+  /** Whether that prompt can be answered from the island. */
+  answerable: boolean;
 }
 
 /** Most urgent first, the same order as ofa-core's IslandState. */
