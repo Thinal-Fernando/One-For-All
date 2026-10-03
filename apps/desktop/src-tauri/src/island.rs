@@ -13,6 +13,7 @@
 //! The window is a transparent strip against that edge, big enough for the
 //! orb, the ripple it makes and the pop-up; only what the UI paints is solid.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -81,6 +82,15 @@ pub struct IslandState {
     placement: Mutex<Option<Placement>>,
     /// The orb's edge and size the UI was last told about.
     layout: Mutex<Option<IslandSettings>>,
+    /// Hidden from the tray menu, until shown again or OFA restarts.
+    hidden_by_user: AtomicBool,
+}
+
+/// Hides or shows the orb, from the tray menu.
+pub fn set_hidden_by_user(app: &AppHandle, hidden: bool) {
+    app.state::<IslandState>()
+        .hidden_by_user
+        .store(hidden, Ordering::Relaxed);
 }
 
 /// Called by the UI whenever the painted island changes size.
@@ -185,6 +195,7 @@ fn poll(app: AppHandle, window: WebviewWindow) {
     };
     let mut watchdog = hwnd.map(topmost::Watchdog::new);
     let mut hidden = false;
+    let mut full_screen = false;
     let mut click_through = true;
     let mut open = false;
     let mut last_inside = Instant::now();
@@ -205,13 +216,14 @@ fn poll(app: AppHandle, window: WebviewWindow) {
         }
 
         if let Some(hwnd) = hwnd.filter(|_| tick.is_multiple_of(FULLSCREEN_EVERY)) {
-            let full_screen = fullscreen::in_front_of(hwnd);
-            if full_screen != hidden {
-                hidden = full_screen;
-                let result = if hidden { window.hide() } else { window.show() };
-                if let Err(err) = result {
-                    eprintln!("island: could not hide or show for full screen: {err}");
-                }
+            full_screen = fullscreen::in_front_of(hwnd);
+        }
+        let hide = full_screen || state.hidden_by_user.load(Ordering::Relaxed);
+        if hide != hidden {
+            hidden = hide;
+            let result = if hidden { window.hide() } else { window.show() };
+            if let Err(err) = result {
+                eprintln!("island: could not hide or show: {err}");
             }
         }
 
