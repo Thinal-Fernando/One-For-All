@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::{island, usage};
 
@@ -131,6 +132,25 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether OFA starts when you sign in to Windows. Kept by Windows itself
+/// (the Run list in the registry), not in `settings.json`.
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|err| err.to_string())
+}
+
+/// Turns starting with Windows on or off.
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let autolaunch = app.autolaunch();
+    let result = if enabled {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    result.map_err(|err| format!("could not change starting with Windows: {err}"))
+}
+
 /// Opens the settings window, or brings it forward if it is already open.
 ///
 /// Async on purpose: on Windows, creating a window from a sync command
@@ -170,7 +190,7 @@ fn show_window(app: &AppHandle) -> tauri::Result<()> {
 fn build_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
         .title("OFA Settings")
-        .inner_size(420.0, 470.0)
+        .inner_size(420.0, 600.0)
         .resizable(false)
         .maximizable(false)
         .theme(Some(tauri::Theme::Dark))

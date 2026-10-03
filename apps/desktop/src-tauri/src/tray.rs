@@ -7,6 +7,9 @@ use tauri::AppHandle;
 
 use crate::{island, settings};
 
+/// The tray icon's id.
+pub const TRAY: &str = "ofa";
+
 const SETTINGS: &str = "settings";
 const HIDE: &str = "hide";
 const QUIT: &str = "quit";
@@ -19,7 +22,7 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&open, &hide, &separator, &quit])?;
 
-    let mut tray = TrayIconBuilder::with_id("ofa")
+    let mut tray = TrayIconBuilder::with_id(TRAY)
         .tooltip("OFA")
         .menu(&menu)
         .show_menu_on_left_click(false)

@@ -9,6 +9,7 @@ mod shortcuts;
 mod topmost;
 mod transcript;
 mod tray;
+mod updates;
 mod usage;
 
 use tauri::Manager;
@@ -21,9 +22,12 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             settings::open(app);
         }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(island::IslandState::default())
         .manage(sessions::Sessions::default())
         .manage(usage::Usage::default())
+        .manage(updates::Updates::default())
         .invoke_handler(tauri::generate_handler![
             island::set_hit_area,
             island::get_island_layout,
@@ -34,6 +38,11 @@ pub fn run() {
             settings::get_settings,
             settings::save_settings,
             settings::open_settings,
+            settings::get_autostart,
+            settings::set_autostart,
+            updates::get_update_status,
+            updates::check_for_update,
+            updates::install_update,
             usage::get_usage
         ])
         .setup(|app| {
@@ -45,6 +54,7 @@ pub fn run() {
             sessions::start(app.handle())?;
             shortcuts::start(app.handle())?;
             tray::start(app.handle())?;
+            updates::start(app.handle());
             usage::start(app.handle())?;
             // Without the API the island still runs, it just hears nothing.
             if let Err(err) = api::start(app.handle()) {

@@ -27,6 +27,12 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      # The app's build checks that the bundled ofa.exe exists, so it is built
+      # before anything compiles the app.
+      - name: Build ofa.exe for the installer
+        working-directory: apps/desktop
+        run: npm run sidecar
+
       - name: Type-check the island UI
         working-directory: apps/desktop
         run: npm run check
@@ -39,9 +45,6 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
-
-      - name: Build ofa.exe
-        run: cargo build --release -p ofa-cli
 
       - name: Build the installer
         working-directory: apps/desktop

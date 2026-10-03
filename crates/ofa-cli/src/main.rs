@@ -5,6 +5,7 @@
 
 mod claude;
 mod client;
+mod path;
 mod process;
 mod setup;
 
@@ -33,6 +34,10 @@ enum Command {
         /// Settings file to change, instead of ~/.claude/settings.json.
         #[arg(long, value_name = "FILE")]
         settings: Option<PathBuf>,
+        /// Also add ofa.exe's folder to your PATH (or remove it with
+        /// --uninstall). The installer uses this.
+        #[arg(long)]
+        path: bool,
     },
     /// Show the helper's version and where it expects the OFA app.
     Status,
@@ -61,7 +66,8 @@ fn main() -> ExitCode {
         Command::Setup {
             uninstall,
             settings,
-        } => match run_setup(uninstall, settings) {
+            path,
+        } => match run_setup(uninstall, settings, path) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 eprintln!("ofa setup: {err}");
@@ -100,7 +106,7 @@ fn log_hook_error(err: &str) {
     }
 }
 
-fn run_setup(uninstall: bool, settings: Option<PathBuf>) -> Result<(), String> {
+fn run_setup(uninstall: bool, settings: Option<PathBuf>, add_to_path: bool) -> Result<(), String> {
     let path = settings
         .or_else(setup::settings_path)
         .ok_or("couldn't find your Claude Code settings folder")?;
@@ -123,6 +129,19 @@ fn run_setup(uninstall: bool, settings: Option<PathBuf>) -> Result<(), String> {
     if !uninstall {
         println!("Hooks run {}", exe.display());
         println!("New Claude Code sessions will show on the island.");
+    }
+
+    if add_to_path {
+        let dir = exe.parent().ok_or("ofa.exe has no folder")?;
+        let changed = path::run(dir, uninstall)?;
+        match (changed, uninstall) {
+            (true, false) => println!(
+                "Added {} to your PATH; open a new terminal to use `ofa`",
+                dir.display()
+            ),
+            (true, true) => println!("Removed {} from your PATH", dir.display()),
+            (false, _) => println!("Your PATH needed no change"),
+        }
     }
     Ok(())
 }

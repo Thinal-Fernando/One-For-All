@@ -4,6 +4,22 @@ A small orb on the edge of your Windows screen that follows your Claude Code
 sessions. Hover it and it sinks into the edge with a ripple and opens the
 details.
 
+## Installing
+
+Run `OFA_<version>_x64-setup.exe`. It installs for your Windows account only
+(no admin needed) into `%LOCALAPPDATA%\OFA`, and:
+
+- connects OFA to Claude Code by running `ofa setup` (your Claude Code
+  settings are kept and backed up first),
+- adds `ofa` to your PATH, for new terminals.
+
+OFA then sits by the clock: click its tray icon for the settings, or right-click
+it to hide the orb or quit. Starting OFA again while it runs opens the settings.
+"Start with Windows" is in the settings and is off until you turn it on.
+
+Uninstall it from Windows Settings > Apps. That removes OFA's hooks from Claude
+Code and its PATH entry too; Claude Code keeps working as before.
+
 ## Layout
 
 ```
@@ -28,7 +44,11 @@ npx tauri dev        # run the island with live reload
 npx tauri build      # installer at target/release/bundle/nsis/OFA_<version>_x64-setup.exe
 ```
 
-From the repo root:
+Both commands first build `ofa.exe` and copy it to `src-tauri/binaries/`, which
+the installer bundles next to the app.
+
+From the repo root (on a fresh clone, run `npm run sidecar` in `apps/desktop`
+once first, since the app won't compile without the bundled `ofa.exe`):
 
 ```powershell
 cargo test --workspace
@@ -46,6 +66,24 @@ npx tauri build --no-bundle   # target/release/ofa-desktop.exe
 CI runs the same checks on every push to `main` and every pull request, and
 uploads the installer and `ofa.exe` as a build artifact.
 
+## Releasing
+
+Installed copies check GitHub Releases for `latest.json` shortly after they
+start and then every 6 hours, and offer the update in the settings (About >
+Install and restart). Updates are signed, and OFA refuses any that don't match
+the public key in `tauri.conf.json`.
+
+1. Once: add the repository secret `TAURI_SIGNING_PRIVATE_KEY` with the
+   contents of `%USERPROFILE%\.tauri\ofa-updater.key`. Keep that file safe and
+   private: without it no update can be published, and anyone with it could
+   sign one.
+2. Raise `version` in `apps/desktop/src-tauri/tauri.conf.json` and commit.
+3. Tag and push: `git tag v0.2.0` then `git push origin v0.2.0`. The Release
+   workflow builds, signs and publishes the installer and `latest.json`.
+
+Releases must be downloadable without signing in, so the repository (or
+wherever the releases live) has to be public for updates to reach anyone.
+
 ## Running and testing
 
 Run these from the repo root in PowerShell, after building.
@@ -57,7 +95,7 @@ Run these from the repo root in PowerShell, after building.
    .\target\release\ofa.exe setup
    ```
 
-2. Start the island. Start it only once; a second copy gets no events.
+2. Start the island. Starting it again while it runs opens the settings.
 
    ```powershell
    Start-Process .\target\release\ofa-desktop.exe

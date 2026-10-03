@@ -1,8 +1,18 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
 
   type Edge = "right" | "left" | "top";
+
+  /** Matches UpdateStatus in src-tauri/src/updates.rs. */
+  interface UpdateStatus {
+    current: string;
+    available: string | null;
+    checking: boolean;
+    installing: boolean;
+    error: string | null;
+  }
 
   interface Settings {
     exact_usage: boolean;
@@ -19,12 +29,40 @@
   ];
 
   let settings = $state<Settings | null>(null);
+  let autostart = $state(false);
+  let update = $state<UpdateStatus | null>(null);
   let error = $state("");
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-  onMount(async () => {
-    settings = await invoke<Settings>("get_settings");
+  onMount(() => {
+    const unlisten = listen<UpdateStatus>("update", (e) => (update = e.payload));
+    load();
+    return () => void unlisten.then((stop) => stop());
   });
+
+  async function load() {
+    settings = await invoke<Settings>("get_settings");
+    update = await invoke<UpdateStatus>("get_update_status");
+    try {
+      autostart = await invoke<boolean>("get_autostart");
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  // Failures show in the status line, from the "update" event.
+  const checkNow = () => invoke("check_for_update").catch(() => {});
+  const installNow = () => invoke("install_update").catch(() => {});
+
+  async function setAutostart() {
+    try {
+      await invoke("set_autostart", { enabled: autostart });
+      error = "";
+    } catch (err) {
+      error = String(err);
+      autostart = !autostart;
+    }
+  }
 
   // Every change is saved and applied at once; the size slider waits until
   // dragging pauses so the orb isn't moved on every pixel.
@@ -93,6 +131,17 @@
     </section>
 
     <section>
+      <h2>General</h2>
+      <label class="toggle">
+        <span>
+          <span class="label">Start with Windows</span>
+          <span class="hint">Opens OFA when you sign in, so the orb is always there.</span>
+        </span>
+        <input type="checkbox" bind:checked={autostart} onchange={setAutostart} />
+      </label>
+    </section>
+
+    <section>
       <h2>Usage</h2>
       <label class="toggle">
         <span>
@@ -105,6 +154,37 @@
         <input type="checkbox" bind:checked={settings.exact_usage} onchange={() => save()} />
       </label>
     </section>
+
+    {#if update}
+      <section>
+        <h2>About</h2>
+        <div class="field">
+          <span>
+            <span class="label">OFA {update.current}</span>
+            <span class="hint about">
+              {#if update.installing}
+                Installing version {update.available}; OFA restarts when it's done.
+              {:else if update.checking}
+                Checking for updates…
+              {:else if update.error}
+                {update.error}
+              {:else if update.available}
+                Version {update.available} is ready.
+              {:else}
+                Up to date.
+              {/if}
+            </span>
+          </span>
+          {#if update.available}
+            <button class="button primary" disabled={update.installing} onclick={installNow}>
+              Install and restart
+            </button>
+          {:else}
+            <button class="button" disabled={update.checking} onclick={checkNow}>Check now</button>
+          {/if}
+        </div>
+      </section>
+    {/if}
 
     {#if error}
       <p class="error" role="alert">{error}</p>
@@ -297,6 +377,36 @@
 
   .toggle input:focus-visible,
   .segments button:focus-visible {
+    outline: 2px solid #5b8cff;
+    outline-offset: 2px;
+  }
+
+  .about {
+    display: block;
+    margin-top: 4px;
+  }
+
+  .button {
+    flex: none;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: #2b2d33;
+    color: #f1f2f4;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .button.primary {
+    background: #5b8cff;
+  }
+
+  .button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .button:focus-visible {
     outline: 2px solid #5b8cff;
     outline-offset: 2px;
   }

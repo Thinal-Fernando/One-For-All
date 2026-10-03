@@ -17,6 +17,15 @@ html.settings-window body {
   color-scheme: dark;
 }
 
+/* It scrolls when its content is taller than the window. */
+html.settings-window body {
+  overflow-y: auto;
+}
+
+html.settings-window #app {
+  height: auto;
+}
+
 #app {
   height: 100%;
   display: flex;
