@@ -94,6 +94,8 @@ pub enum EventKind {
     },
     /// The agent finished its turn and is waiting for your next prompt.
     TurnFinished,
+    /// You stopped the agent mid-turn (Esc). It waits for your next prompt.
+    Interrupted,
     /// The agent reported an error that stopped its turn.
     Failed {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,6 +186,17 @@ mod tests {
         assert_eq!(event.title, None);
         assert_eq!(event.transcript_path, None);
         assert_eq!(event.kind, EventKind::Working { detail: None });
+    }
+
+    #[test]
+    fn interrupted_has_no_fields() {
+        let event: Event = serde_json::from_value(json!({
+            "source": "codex",
+            "session_id": "s",
+            "event": "interrupted"
+        }))
+        .unwrap();
+        assert_eq!(event.kind, EventKind::Interrupted);
     }
 
     #[test]
