@@ -1,7 +1,7 @@
 # One-For-All (OFA)
 
 A Dynamic Island–style status pill for Windows that follows your AI coding agents
-(Claude Code, Codex) and long terminal jobs.
+(Claude Code, Codex).
 
 ## Layout
 
@@ -12,8 +12,7 @@ apps/desktop/          Tauri 2 app
 crates/
   ofa-protocol/        event and API types shared by the app and the CLI
   ofa-core/            session state machine (pure logic, unit-tested)
-  ofa-cli/             ofa.exe: hook, run, setup
-shell/powershell/      optional profile snippet for auto-tracking
+  ofa-cli/             ofa.exe: hook, setup
 docs/                  architecture and design notes
 ```
 

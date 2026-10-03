@@ -1,6 +1,6 @@
 [package]
 name = "ofa-cli"
-description = "ofa.exe: forwards agent hooks and terminal jobs to the OFA app"
+description = "ofa.exe: forwards AI agent hooks to the OFA app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

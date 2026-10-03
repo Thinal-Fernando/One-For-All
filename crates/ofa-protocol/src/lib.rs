@@ -51,16 +51,15 @@ pub fn token_path() -> Option<PathBuf> {
 pub enum Source {
     ClaudeCode,
     Codex,
-    Terminal,
 }
 
-/// Something that happened in one agent session or terminal job.
+/// Something that happened in one agent session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub source: Source,
-    /// The tool's own id for the session, or a fresh id per terminal job.
+    /// The tool's own id for the session.
     pub session_id: String,
-    /// The agent's or job's process, so the app can tell when it disappears
+    /// The agent's process, so the app can tell when it disappears
     /// without saying goodbye (Ctrl+C, a closed terminal).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
@@ -100,8 +99,6 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
-    /// A terminal job ended.
-    JobFinished { exit_code: i32, duration_ms: u64 },
     /// The session closed normally.
     SessionEnded,
 }
@@ -187,25 +184,6 @@ mod tests {
         assert_eq!(event.title, None);
         assert_eq!(event.transcript_path, None);
         assert_eq!(event.kind, EventKind::Working { detail: None });
-    }
-
-    #[test]
-    fn job_finished_carries_exit_code_and_duration() {
-        let event: Event = serde_json::from_value(json!({
-            "source": "terminal",
-            "session_id": "job-7",
-            "event": "job-finished",
-            "exit_code": 101,
-            "duration_ms": 42000
-        }))
-        .unwrap();
-        assert_eq!(
-            event.kind,
-            EventKind::JobFinished {
-                exit_code: 101,
-                duration_ms: 42_000
-            }
-        );
     }
 
     #[test]

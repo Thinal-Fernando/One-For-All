@@ -157,23 +157,6 @@ impl Store {
             )),
             EventKind::TurnFinished => Some((SessionState::Done, None)),
             EventKind::Failed { detail } => Some((SessionState::Failed, detail)),
-            EventKind::JobFinished {
-                exit_code: 0,
-                duration_ms,
-            } => Some((
-                SessionState::Done,
-                Some(format!("Finished in {}", duration(duration_ms))),
-            )),
-            EventKind::JobFinished {
-                exit_code,
-                duration_ms,
-            } => Some((
-                SessionState::Failed,
-                Some(format!(
-                    "Exited with code {exit_code} after {}",
-                    duration(duration_ms)
-                )),
-            )),
             EventKind::SessionEnded => unreachable!("handled above"),
         };
 
@@ -218,7 +201,7 @@ impl Store {
 
     /// Handles sessions whose process has gone. A busy or waiting session
     /// becomes Lost, an idle one is dropped. Done, Failed and Lost keep their
-    /// state, since a finished job's process is expected to be gone.
+    /// state, so a finished or failed session stays visible.
     /// Returns whether anything changed.
     pub fn reap(&mut self, now: Instant, is_alive: impl Fn(u32) -> bool) -> bool {
         let mut changed = false;
@@ -304,19 +287,6 @@ impl Store {
         let before = self.sessions.len();
         self.sessions.retain(|s| &s.key != key);
         self.sessions.len() != before
-    }
-}
-
-/// "850 ms", "42 s", "3 min 5 s", "2 h 10 min".
-fn duration(ms: u64) -> String {
-    let secs = ms / 1000;
-    match secs {
-        0 => format!("{ms} ms"),
-        1..=59 => format!("{secs} s"),
-        60..=3599 if secs.is_multiple_of(60) => format!("{} min", secs / 60),
-        60..=3599 => format!("{} min {} s", secs / 60, secs % 60),
-        _ if (secs % 3600) / 60 == 0 => format!("{} h", secs / 3600),
-        _ => format!("{} h {} min", secs / 3600, secs % 3600 / 60),
     }
 }
 
@@ -689,41 +659,5 @@ mod tests {
         store.reap(t, |_| false);
         store.apply(event("a", working("y")), t);
         assert_eq!(state_of(&store, "a"), Some(SessionState::Working));
-    }
-
-    #[test]
-    fn terminal_jobs_finish_done_or_failed_by_exit_code() {
-        let t = Instant::now();
-        let mut store = Store::new();
-        let job = |id: &str, exit_code, duration_ms| Event {
-            source: Source::Terminal,
-            session_id: id.into(),
-            pid: Some(99),
-            title: Some("cargo test".into()),
-            transcript_path: None,
-            kind: EventKind::JobFinished {
-                exit_code,
-                duration_ms,
-            },
-        };
-        store.apply(job("ok", 0, 185_000), t);
-        store.apply(job("bad", 101, 42_000), t);
-        let detail = |i: usize| store.sessions()[i].detail.as_deref();
-        assert_eq!(store.sessions()[0].state, SessionState::Done);
-        assert_eq!(detail(0), Some("Finished in 3 min 5 s"));
-        assert_eq!(store.sessions()[1].state, SessionState::Failed);
-        assert_eq!(detail(1), Some("Exited with code 101 after 42 s"));
-        // The job's process is gone by now, and that's expected.
-        assert!(!store.reap(t, |_| false));
-    }
-
-    #[test]
-    fn durations_read_naturally() {
-        assert_eq!(duration(850), "850 ms");
-        assert_eq!(duration(42_000), "42 s");
-        assert_eq!(duration(120_000), "2 min");
-        assert_eq!(duration(185_000), "3 min 5 s");
-        assert_eq!(duration(3_600_000), "1 h");
-        assert_eq!(duration(7_800_000), "2 h 10 min");
     }
 }

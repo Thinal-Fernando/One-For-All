@@ -371,7 +371,6 @@ fn source_name(source: Source) -> &'static str {
     match source {
         Source::ClaudeCode => "claude-code",
         Source::Codex => "codex",
-        Source::Terminal => "terminal",
     }
 }
 
@@ -379,7 +378,6 @@ fn source_label(source: Source) -> &'static str {
     match source {
         Source::ClaudeCode => "Claude Code",
         Source::Codex => "Codex",
-        Source::Terminal => "Terminal",
     }
 }
 

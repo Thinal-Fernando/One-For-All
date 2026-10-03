@@ -25,11 +25,6 @@ struct Cli {
 enum Command {
     /// Forward an agent hook event (JSON on stdin) to the OFA app.
     Hook,
-    /// Run a command and report its exit code and duration to the OFA app.
-    Run {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
-        command: Vec<String>,
-    },
     /// Install or remove OFA's hooks in Claude Code's settings.
     Setup {
         /// Remove OFA's hooks instead.
@@ -72,10 +67,6 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Run { .. } => {
-            eprintln!("ofa: not implemented yet");
-            ExitCode::from(2)
-        }
     }
 }
 
@@ -140,19 +131,5 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
-    }
-
-    #[test]
-    fn run_keeps_the_wrapped_command_and_its_flags() {
-        let cli = Cli::try_parse_from(["ofa", "run", "npm", "test", "--", "--watch"]).unwrap();
-        let Command::Run { command } = cli.command else {
-            panic!("expected run");
-        };
-        assert_eq!(command, ["npm", "test", "--", "--watch"]);
-    }
-
-    #[test]
-    fn run_needs_a_command() {
-        assert!(Cli::try_parse_from(["ofa", "run"]).is_err());
     }
 }

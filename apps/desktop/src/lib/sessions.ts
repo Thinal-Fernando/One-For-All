@@ -1,11 +1,11 @@
-// What the island knows about each agent session or terminal job. Matches
+// What the island knows about each agent session. Matches
 // SessionView in src-tauri/src/sessions.rs, which sends the full list.
 
 export type SessionState = "needs-you" | "failed" | "working" | "done" | "idle" | "lost";
 
 export interface Session {
   id: string;
-  /** Where it runs: "Claude Code", "Codex" or "Terminal". */
+  /** Which agent: "Claude Code" or "Codex". */
   source: string;
   title: string;
   state: SessionState;
