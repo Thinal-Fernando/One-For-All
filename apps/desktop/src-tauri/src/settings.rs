@@ -140,6 +140,18 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     show_window(&app).map_err(|err| err.to_string())
 }
 
+/// Opens the settings window from anywhere outside a command, such as the
+/// tray menu or a second launch of OFA. Done off the main thread for the
+/// same reason `open_settings` is async.
+pub fn open(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = show_window(&app) {
+            eprintln!("settings: could not open the window: {err}");
+        }
+    });
+}
+
 fn show_window(app: &AppHandle) -> tauri::Result<()> {
     let window = match app.get_webview_window(SETTINGS) {
         Some(window) => window,

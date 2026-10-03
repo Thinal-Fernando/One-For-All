@@ -8,6 +8,7 @@ mod settings;
 mod shortcuts;
 mod topmost;
 mod transcript;
+mod tray;
 mod usage;
 
 use tauri::Manager;
@@ -15,6 +16,11 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must come first. Starting OFA again while it runs opens the
+        // settings instead of a second orb.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            settings::open(app);
+        }))
         .manage(island::IslandState::default())
         .manage(sessions::Sessions::default())
         .manage(usage::Usage::default())
@@ -24,6 +30,7 @@ pub fn run() {
             sessions::get_sessions,
             sessions::focus_session,
             sessions::answer_prompt,
+            sessions::dismiss_session,
             settings::get_settings,
             settings::save_settings,
             settings::open_settings,
@@ -37,6 +44,7 @@ pub fn run() {
             island::start(app.handle(), window.clone())?;
             sessions::start(app.handle())?;
             shortcuts::start(app.handle())?;
+            tray::start(app.handle())?;
             usage::start(app.handle())?;
             // Without the API the island still runs, it just hears nothing.
             if let Err(err) = api::start(app.handle()) {
