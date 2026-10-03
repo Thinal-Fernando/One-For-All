@@ -5,7 +5,7 @@ name: Release
 #
 # Needs the repository secret TAURI_SIGNING_PRIVATE_KEY: the contents of the
 # key file made with `npx tauri signer generate` (its public half is in
-# tauri.conf.json). The version in tauri.conf.json must match the tag.
+# tauri.conf.json). The version in the root Cargo.toml must match the tag.
 
 on:
   push:

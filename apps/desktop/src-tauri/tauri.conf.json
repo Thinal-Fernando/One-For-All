@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OFA",
-  "version": "0.1.0",
   "identifier": "com.oneforall.ofa",
   "build": {
     "beforeDevCommand": "npm run sidecar && npm run dev",

@@ -68,6 +68,8 @@ uploads the installer and `ofa.exe` as a build artifact.
 
 ## Releasing
 
+The full walkthrough is in [docs/releasing.md](docs/releasing.md).
+
 Installed copies check GitHub Releases for `latest.json` shortly after they
 start and then every 6 hours, and offer the update in the settings (About >
 Install and restart). Updates are signed, and OFA refuses any that don't match
@@ -77,7 +79,8 @@ the public key in `tauri.conf.json`.
    contents of `%USERPROFILE%\.tauri\ofa-updater.key`. Keep that file safe and
    private: without it no update can be published, and anyone with it could
    sign one.
-2. Raise `version` in `apps/desktop/src-tauri/tauri.conf.json` and commit.
+2. Raise `version` in the root `Cargo.toml` (the app, `ofa.exe` and the
+   installer all take it from there) and commit.
 3. Tag and push: `git tag v0.2.0` then `git push origin v0.2.0`. The Release
    workflow builds, signs and publishes the installer and `latest.json`.
 
