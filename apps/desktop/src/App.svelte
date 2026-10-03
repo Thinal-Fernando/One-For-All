@@ -260,6 +260,17 @@
                 <button class="answer deny" onclick={() => answer(session, false)}>Deny</button>
                 <button class="answer allow" onclick={() => answer(session, true)}>Allow</button>
               </span>
+            {:else if session.state === "failed" || session.state === "lost"}
+              <button
+                class="dismiss"
+                title="Clear"
+                aria-label="Clear {session.title}"
+                onclick={() => invoke("dismiss_session", { id: session.id })}
+              >
+                <svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
+                  <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                </svg>
+              </button>
             {/if}
           </li>
         {:else}
@@ -670,6 +681,26 @@
   }
   .lost.state {
     color: var(--pop-muted);
+  }
+
+  .dismiss {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    margin-right: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--pop-muted);
+    cursor: pointer;
+  }
+
+  .dismiss:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f1f2f4;
   }
 
   .answers {

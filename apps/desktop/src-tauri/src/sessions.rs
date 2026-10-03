@@ -315,6 +315,26 @@ pub fn focus_session(sessions: tauri::State<'_, Sessions>, id: String) -> bool {
     sessions.pid_of(&id).is_some_and(focus::bring_to_front)
 }
 
+/// Clears a Failed or Lost session from the island once you have seen it.
+/// Other sessions are left alone. Returns whether one was cleared.
+#[tauri::command]
+pub fn dismiss_session(app: AppHandle, sessions: tauri::State<'_, Sessions>, id: String) -> bool {
+    let dismissed = {
+        let mut store = sessions.store.lock().unwrap();
+        let key = store
+            .sessions()
+            .iter()
+            .find(|s| view_id(&s.key) == id)
+            .filter(|s| matches!(s.state, SessionState::Failed | SessionState::Lost))
+            .map(|s| s.key.clone());
+        key.is_some_and(|key| store.dismiss(&key))
+    };
+    if dismissed {
+        sessions.publish(&app);
+    }
+    dismissed
+}
+
 /// Starts the thread that runs the timers, the transcript watch and the
 /// process check.
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
