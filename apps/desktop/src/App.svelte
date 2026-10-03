@@ -3,11 +3,15 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { LABELS, islandState, type Session } from "./lib/sessions";
+  import { clockTime, level, resetsIn, tokens, type Usage } from "./lib/usage";
 
   // The Rust side polls the cursor and tells us when to open, because a
   // click-through window never receives hover events of its own.
   let open = $state(false);
   let sessions = $state<Session[]>([]);
+  let usage = $state<Usage | null>(null);
+  // Ticks once a minute so "resets in" counts down.
+  let now = $state(Date.now());
   let island: HTMLDivElement;
 
   const current = $derived(islandState(sessions));
@@ -48,10 +52,18 @@
       invoke<Session[]>("get_sessions").then((current) => (sessions = current)),
     );
 
+    const unlistenUsage = listen<Usage>("usage", (event) => {
+      usage = event.payload;
+    });
+    unlistenUsage.then(() => invoke<Usage>("get_usage").then((current) => (usage = current)));
+    const clock = setInterval(() => (now = Date.now()), 60_000);
+
     return () => {
       observer.disconnect();
       unlisten.then((stop) => stop());
       unlistenSessions.then((stop) => stop());
+      unlistenUsage.then((stop) => stop());
+      clearInterval(clock);
     };
   });
 </script>
@@ -93,6 +105,42 @@
         <li class="empty">Nothing running</li>
       {/each}
     </ul>
+    {#if usage?.plan}
+      {@const session = usage.plan.session}
+      {@const weekly = usage.plan.weekly}
+      <div class="plan">
+        <div class="plan-head">
+          <span>Claude plan · 5-hour limit</span>
+          <span>
+            {Math.round(session.percent)}% used{session.resets_at
+              ? ` · resets ${clockTime(session.resets_at, now)}`
+              : ""}
+          </span>
+        </div>
+        <div class="bar">
+          <div
+            class="fill {level(session.percent)}"
+            style="width: {Math.min(100, session.percent)}%"
+          ></div>
+        </div>
+        {#if weekly}
+          <div class="plan-week">
+            Weekly {Math.round(weekly.percent)}%{weekly.resets_at
+              ? ` · resets ${clockTime(weekly.resets_at, now)}`
+              : ""}
+          </div>
+        {/if}
+      </div>
+    {:else if usage && (usage.window_tokens > 0 || usage.week_tokens > 0)}
+      <p class="usage" title="Estimated from Claude Code's logs on this PC">
+        {#if usage.window_resets_at}
+          {tokens(usage.window_tokens)} tokens this window · {resetsIn(usage.window_resets_at, now)}
+        {:else}
+          No usage window open
+        {/if}
+        · {tokens(usage.week_tokens)} in 7 days
+      </p>
+    {/if}
   {:else if current !== "idle"}
     <div class="compact">
       <span class="mark {current}"></span>
@@ -130,9 +178,68 @@
   }
 
   .island.open {
+    display: flex;
+    flex-direction: column;
     width: 360px;
-    height: 150px;
+    height: 196px;
     border-radius: 24px;
+  }
+
+  .plan {
+    padding: 8px 16px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    animation: appear 180ms 80ms ease both;
+  }
+
+  .plan-head,
+  .plan-week {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11.5px;
+    color: #c4cad4;
+    white-space: nowrap;
+  }
+
+  .plan-week {
+    margin-top: 5px;
+    font-size: 11px;
+    color: #9aa3b2;
+  }
+
+  .bar {
+    margin-top: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+  }
+
+  .fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--blue);
+    transition: width 400ms ease;
+  }
+
+  .fill.warning {
+    background: var(--amber);
+  }
+
+  .fill.full {
+    background: var(--red);
+  }
+
+  .usage {
+    margin: 0;
+    padding: 6px 16px 10px;
+    font-size: 11px;
+    color: #9aa3b2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    animation: appear 180ms 80ms ease both;
   }
 
   /* Only a permission request pulses, so it stands out from everything else. */
@@ -173,6 +280,9 @@
   }
 
   .panel {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
     list-style: none;
     margin: 0;
     padding: 12px 16px;

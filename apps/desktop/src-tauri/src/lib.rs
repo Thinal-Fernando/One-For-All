@@ -2,10 +2,12 @@ mod api;
 mod focus;
 mod fullscreen;
 mod island;
+mod plan;
 mod sessions;
 mod shortcuts;
 mod topmost;
 mod transcript;
+mod usage;
 
 use tauri::Manager;
 
@@ -14,11 +16,13 @@ pub fn run() {
     tauri::Builder::default()
         .manage(island::IslandState::default())
         .manage(sessions::Sessions::default())
+        .manage(usage::Usage::default())
         .invoke_handler(tauri::generate_handler![
             island::set_hit_area,
             sessions::get_sessions,
             sessions::focus_session,
-            sessions::answer_prompt
+            sessions::answer_prompt,
+            usage::get_usage
         ])
         .setup(|app| {
             let window = app
@@ -28,6 +32,7 @@ pub fn run() {
             island::start(app.handle(), window.clone())?;
             sessions::start(app.handle())?;
             shortcuts::start(app.handle())?;
+            usage::start(app.handle())?;
             // Without the API the island still runs, it just hears nothing.
             if let Err(err) = api::start(app.handle()) {
                 eprintln!("api: not started: {err}");

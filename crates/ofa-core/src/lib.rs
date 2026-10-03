@@ -2,6 +2,8 @@
 //! unit-tested against recorded events: the caller passes in the time and
 //! says which processes are still alive.
 
+pub mod usage;
+
 use std::time::{Duration, Instant};
 
 use ofa_protocol::{Event, EventKind, Source};

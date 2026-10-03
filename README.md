@@ -34,7 +34,76 @@ cargo test --workspace
 cargo build --release -p ofa-cli   # target/release/ofa.exe
 ```
 
-The island has no tray icon yet; close it with `Stop-Process -Name ofa-desktop`.
+For a release build of the island without the installer, close any running
+island first, then:
+
+```powershell
+cd apps/desktop
+npx tauri build --no-bundle   # target/release/ofa-desktop.exe
+```
 
 CI runs the same checks on every push to `main` and every pull request, and
 uploads the installer and `ofa.exe` as a build artifact.
+
+## Running and testing
+
+Run these from the repo root in PowerShell, after building.
+
+1. Add OFA's hooks to Claude Code's user settings (once per PC). Your existing
+   settings are kept and backed up first:
+
+   ```powershell
+   .\target\release\ofa.exe setup
+   ```
+
+2. Start the island. Start it only once; a second copy gets no events.
+
+   ```powershell
+   Start-Process .\target\release\ofa-desktop.exe
+   ```
+
+3. Check it is running:
+
+   ```powershell
+   .\target\release\ofa.exe status
+   Invoke-RestMethod http://127.0.0.1:47821/health
+   ```
+
+4. In a new terminal, in any folder, run `claude` and try:
+
+   | Do this | The pill should |
+   | --- | --- |
+   | Type `hello` | show Working, then Done for 6 seconds |
+   | Ask it to create a file, then click **Allow** on the pill (or press Ctrl+Alt+Y) | pulse amber, then create the file without you touching the terminal |
+   | Ask it to create a file, then press Ctrl+Alt+N | pass your denial to Claude |
+   | Ask it to create a file and answer in the terminal | clear once Claude moves on |
+   | Start a long task, then press Esc | go quiet |
+   | While it works, click another app, then click the session row | bring the terminal to the front |
+   | Close the terminal mid-task | mark the session Lost within about 10 seconds |
+
+If the pill doesn't react, `ofa hook` logs why:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\OFA\hook-errors.log" -Tail 10
+```
+
+The open panel ends with your Claude plan usage. By default it is an estimate
+from Claude Code's logs on this PC. To show the exact percentages Claude shows,
+put this in `%APPDATA%\OFA\settings.json` (OFA then reads Claude Code's saved
+sign-in to ask Claude, and never changes it):
+
+```json
+{ "exact_usage": true }
+```
+
+Stop the island (Claude Code keeps working normally without it):
+
+```powershell
+Stop-Process -Name ofa-desktop
+```
+
+Remove OFA's hooks from Claude Code completely:
+
+```powershell
+.\target\release\ofa.exe setup --uninstall
+```
