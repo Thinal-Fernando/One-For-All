@@ -74,6 +74,10 @@ pub struct Session {
     pub detail: Option<String>,
     /// When `state` last changed.
     pub since: Instant,
+    /// Counts the permission prompts this session has shown. An answer from
+    /// the island names the prompt it was for, so a click that arrives after
+    /// that prompt was answered elsewhere can't land on the next one.
+    pub prompt: u64,
 }
 
 /// Every known session, in the order they first appeared.
@@ -124,6 +128,7 @@ impl Store {
                     state: SessionState::Idle,
                     detail: None,
                     since: now,
+                    prompt: 0,
                 });
                 self.sessions.last_mut().expect("just pushed")
             }
@@ -175,6 +180,9 @@ impl Store {
         if let Some((state, detail)) = next {
             if state != session.state {
                 session.since = now;
+                if state == SessionState::NeedsYou {
+                    session.prompt += 1;
+                }
             }
             session.state = state;
             session.detail = detail;
@@ -232,6 +240,46 @@ impl Store {
             }
         });
         changed
+    }
+
+    /// The session that has waited longest for an answer, and its prompt.
+    /// The keyboard shortcuts answer this one.
+    pub fn longest_waiting(&self) -> Option<(SessionKey, u64)> {
+        self.sessions
+            .iter()
+            .filter(|s| s.state == SessionState::NeedsYou)
+            .min_by_key(|s| s.since)
+            .map(|s| (s.key.clone(), s.prompt))
+    }
+
+    /// Whether `prompt` is the one `key` is waiting on right now.
+    pub fn is_waiting_on(&self, key: &SessionKey, prompt: u64) -> bool {
+        self.sessions
+            .iter()
+            .any(|s| &s.key == key && s.state == SessionState::NeedsYou && s.prompt == prompt)
+    }
+
+    /// You answered the prompt from the island. Either way the agent carries
+    /// on at once: an allowed tool runs (which the agent only reports once it
+    /// finishes), and a denied one is reported back to the agent, which then
+    /// decides what to do next. So the session shows Working straight away.
+    /// Does nothing unless that exact prompt is still waiting. Returns
+    /// whether anything changed.
+    pub fn answered(&mut self, key: &SessionKey, prompt: u64, allowed: bool, now: Instant) -> bool {
+        if !self.is_waiting_on(key, prompt) {
+            return false;
+        }
+        let s = self
+            .sessions
+            .iter_mut()
+            .find(|s| &s.key == key)
+            .expect("checked above");
+        s.state = SessionState::Working;
+        if !allowed {
+            s.detail = None;
+        }
+        s.since = now;
+        true
     }
 
     /// The agent stopped mid-turn because you refused a prompt or pressed
@@ -497,6 +545,76 @@ mod tests {
             store.sessions()[0].transcript.as_deref(),
             Some("C:/t/a.jsonl")
         );
+    }
+
+    fn prompt_of(store: &Store, id: &str) -> u64 {
+        store
+            .sessions()
+            .iter()
+            .find(|s| s.key.id == id)
+            .unwrap()
+            .prompt
+    }
+
+    #[test]
+    fn each_new_prompt_gets_a_new_number() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", working("x")), t);
+        assert_eq!(prompt_of(&store, "a"), 0);
+        store.apply(event("a", needs_you("one")), t);
+        assert_eq!(prompt_of(&store, "a"), 1);
+        // A repeat of the same prompt's event isn't a new prompt.
+        store.apply(event("a", EventKind::NeedsYou { detail: None }), t);
+        assert_eq!(prompt_of(&store, "a"), 1);
+        store.apply(event("a", working("one")), t);
+        store.apply(event("a", needs_you("two")), t);
+        assert_eq!(prompt_of(&store, "a"), 2);
+    }
+
+    #[test]
+    fn allowing_from_the_island_shows_working_at_once() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", needs_you("npm test")), t);
+        assert!(store.answered(&key("a"), 1, true, t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::Working));
+        assert_eq!(store.sessions()[0].detail.as_deref(), Some("npm test"));
+    }
+
+    #[test]
+    fn denying_from_the_island_lets_the_agent_carry_on() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", needs_you("rm -rf build")), t);
+        assert!(store.answered(&key("a"), 1, false, t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::Working));
+        assert_eq!(store.sessions()[0].detail, None);
+    }
+
+    #[test]
+    fn a_late_answer_never_lands_on_a_newer_prompt() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", needs_you("one")), t);
+        // Answered in the terminal, and the next prompt is already up.
+        store.apply(event("a", working("one")), t);
+        store.apply(event("a", needs_you("two")), t);
+        assert!(!store.is_waiting_on(&key("a"), 1));
+        assert!(!store.answered(&key("a"), 1, true, t));
+        assert_eq!(state_of(&store, "a"), Some(SessionState::NeedsYou));
+        assert!(!store.answered(&key("missing"), 1, true, t));
+    }
+
+    #[test]
+    fn shortcuts_answer_the_longest_waiting_session() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        assert_eq!(store.longest_waiting(), None);
+        store.apply(event("late", needs_you("x")), t + Duration::from_secs(5));
+        store.apply(event("early", needs_you("y")), t);
+        store.apply(event("busy", working("z")), t);
+        assert_eq!(store.longest_waiting(), Some((key("early"), 1)));
     }
 
     #[test]
