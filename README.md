@@ -1,7 +1,7 @@
 # One-For-All (OFA)
 
-A Dynamic Island–style status pill for Windows that follows your AI coding agents
-(Claude Code, Codex).
+A Dynamic Island–style status pill for Windows that follows your Claude Code
+sessions.
 
 ## Layout
 

@@ -5,7 +5,7 @@ export type SessionState = "needs-you" | "failed" | "working" | "done" | "idle" 
 
 export interface Session {
   id: string;
-  /** Which agent: "Claude Code" or "Codex". */
+  /** Which agent: "Claude Code". */
   source: string;
   title: string;
   state: SessionState;

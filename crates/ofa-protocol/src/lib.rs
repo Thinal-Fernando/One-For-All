@@ -50,7 +50,6 @@ pub fn token_path() -> Option<PathBuf> {
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
     ClaudeCode,
-    Codex,
 }
 
 /// Something that happened in one agent session.
@@ -94,8 +93,6 @@ pub enum EventKind {
     },
     /// The agent finished its turn and is waiting for your next prompt.
     TurnFinished,
-    /// You stopped the agent mid-turn (Esc). It waits for your next prompt.
-    Interrupted,
     /// The agent reported an error that stopped its turn.
     Failed {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,7 +174,7 @@ mod tests {
     #[test]
     fn optional_fields_can_be_left_out() {
         let event: Event = serde_json::from_value(json!({
-            "source": "codex",
+            "source": "claude-code",
             "session_id": "s1",
             "event": "working"
         }))
@@ -186,17 +183,6 @@ mod tests {
         assert_eq!(event.title, None);
         assert_eq!(event.transcript_path, None);
         assert_eq!(event.kind, EventKind::Working { detail: None });
-    }
-
-    #[test]
-    fn interrupted_has_no_fields() {
-        let event: Event = serde_json::from_value(json!({
-            "source": "codex",
-            "session_id": "s",
-            "event": "interrupted"
-        }))
-        .unwrap();
-        assert_eq!(event.kind, EventKind::Interrupted);
     }
 
     #[test]
@@ -214,7 +200,7 @@ mod tests {
 
     #[test]
     fn unknown_events_and_sources_are_rejected() {
-        let bad_event = json!({"source": "codex", "session_id": "s", "event": "exploded"});
+        let bad_event = json!({"source": "claude-code", "session_id": "s", "event": "exploded"});
         assert!(serde_json::from_value::<Event>(bad_event).is_err());
         let bad_source = json!({"source": "vim", "session_id": "s", "event": "working"});
         assert!(serde_json::from_value::<Event>(bad_source).is_err());

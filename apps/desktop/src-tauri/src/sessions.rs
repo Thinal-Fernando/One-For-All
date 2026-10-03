@@ -370,14 +370,12 @@ fn view_id(key: &SessionKey) -> String {
 fn source_name(source: Source) -> &'static str {
     match source {
         Source::ClaudeCode => "claude-code",
-        Source::Codex => "codex",
     }
 }
 
 fn source_label(source: Source) -> &'static str {
     match source {
         Source::ClaudeCode => "Claude Code",
-        Source::Codex => "Codex",
     }
 }
 

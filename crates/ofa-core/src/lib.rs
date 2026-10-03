@@ -156,13 +156,6 @@ impl Store {
                 detail.or_else(|| session.detail.clone()),
             )),
             EventKind::TurnFinished => Some((SessionState::Done, None)),
-            // Stopping a busy agent leaves it waiting for you; there is
-            // nothing to report as done or failed.
-            EventKind::Interrupted => matches!(
-                session.state,
-                SessionState::Working | SessionState::NeedsYou
-            )
-            .then_some((SessionState::Idle, None)),
             EventKind::Failed { detail } => Some((SessionState::Failed, detail)),
             EventKind::SessionEnded => unreachable!("handled above"),
         };
@@ -434,19 +427,6 @@ mod tests {
     }
 
     #[test]
-    fn sessions_from_different_tools_never_mix() {
-        let t = Instant::now();
-        let mut store = Store::new();
-        store.apply(event("same-id", working("x")), t);
-        let mut codex = event("same-id", needs_you("y"));
-        codex.source = Source::Codex;
-        store.apply(codex, t);
-        assert_eq!(store.sessions().len(), 2);
-        assert_eq!(store.sessions()[0].state, SessionState::Working);
-        assert_eq!(store.sessions()[1].state, SessionState::NeedsYou);
-    }
-
-    #[test]
     fn island_shows_the_most_urgent_session() {
         let t = Instant::now();
         let mut store = Store::new();
@@ -498,21 +478,6 @@ mod tests {
         store.apply(event("a", working("x")), t);
         assert!(store.interrupt(&key("a"), t));
         assert_eq!(state_of(&store, "a"), Some(SessionState::Idle));
-    }
-
-    #[test]
-    fn an_interrupted_event_goes_idle() {
-        let t = Instant::now();
-        let mut store = Store::new();
-        store.apply(event("a", needs_you("x")), t);
-        assert!(store.apply(event("a", EventKind::Interrupted), t));
-        assert_eq!(state_of(&store, "a"), Some(SessionState::Idle));
-        assert_eq!(store.sessions()[0].detail, None);
-
-        // A finished session stays finished.
-        store.apply(event("b", EventKind::TurnFinished), t);
-        assert!(!store.apply(event("b", EventKind::Interrupted), t));
-        assert_eq!(state_of(&store, "b"), Some(SessionState::Done));
     }
 
     #[test]

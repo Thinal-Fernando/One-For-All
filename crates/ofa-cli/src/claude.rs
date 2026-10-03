@@ -1,9 +1,8 @@
-//! Turns an agent's hook input into OFA events.
+//! Turns Claude Code's hook input into OFA events.
 //!
-//! Claude Code and Codex both run `ofa hook` for each hook event and write
-//! one JSON object to its stdin, with the same event and field names. The
-//! names here were checked against Claude Code 2.1.193 and Codex's hook
-//! documentation; anything unknown is ignored rather than treated as an error.
+//! Claude Code runs `ofa hook` for each hook event and writes one JSON object
+//! to its stdin. The field names here were checked against Claude Code
+//! 2.1.193; anything unknown is ignored rather than treated as an error.
 
 use std::path::Path;
 
@@ -35,7 +34,7 @@ pub struct HookInput {
 const MAX_DETAIL: usize = 80;
 
 /// The event to send, or `None` for hook events OFA doesn't follow.
-pub fn to_event(input: HookInput, source: Source, pid: Option<u32>) -> Option<Event> {
+pub fn to_event(input: HookInput, pid: Option<u32>) -> Option<Event> {
     let working = |detail: &str| EventKind::Working {
         detail: Some(detail.to_owned()),
     };
@@ -64,9 +63,6 @@ pub fn to_event(input: HookInput, source: Source, pid: Option<u32>) -> Option<Ev
             _ => return None,
         },
         "Stop" => EventKind::TurnFinished,
-        // Codex reports Esc; Claude Code doesn't, so the app watches its
-        // transcript instead.
-        "Interrupt" => EventKind::Interrupted,
         "StopFailure" => EventKind::Failed {
             detail: Some(describe_error(input.error_type.as_deref())),
         },
@@ -75,7 +71,7 @@ pub fn to_event(input: HookInput, source: Source, pid: Option<u32>) -> Option<Ev
     };
 
     Some(Event {
-        source,
+        source: Source::ClaudeCode,
         session_id: input.session_id,
         pid,
         title: input.cwd.as_deref().and_then(folder_name),
@@ -84,8 +80,8 @@ pub fn to_event(input: HookInput, source: Source, pid: Option<u32>) -> Option<Ev
     })
 }
 
-/// What `ofa hook` prints to answer a `PermissionRequest`, in the shape both
-/// Claude Code and Codex read from a hook's stdout.
+/// What `ofa hook` prints to answer a `PermissionRequest`, in the shape
+/// Claude Code reads from a hook's stdout.
 pub fn permission_reply(decision: Decision) -> String {
     let decision = match decision {
         Decision::Allow => json!({"behavior": "allow"}),
@@ -109,8 +105,7 @@ fn folder_name(cwd: &str) -> Option<String> {
 
 /// One short line for the island about what a tool is doing.
 fn describe_tool(tool: &str, input: Option<&Value>) -> String {
-    let value = |name: &str| input.and_then(|i| i.get(name));
-    let field = |name: &str| value(name).and_then(Value::as_str);
+    let field = |name: &str| input.and_then(|i| i.get(name)).and_then(Value::as_str);
     let file = || {
         field("file_path")
             .or_else(|| field("notebook_path"))
@@ -118,15 +113,7 @@ fn describe_tool(tool: &str, input: Option<&Value>) -> String {
             .unwrap_or_else(|| "a file".into())
     };
     let line = match tool {
-        // Codex can pass a command as a list of words.
-        "Bash" | "PowerShell" | "shell" | "local_shell" | "exec_command" => value("command")
-            .and_then(command_line)
-            .unwrap_or(tool.into()),
-        // Codex's file edits arrive as a patch, which names each file.
-        "apply_patch" => field("command")
-            .and_then(patched_file)
-            .map(|file| format!("Editing {file}"))
-            .unwrap_or_else(|| "Editing files".into()),
+        "Bash" | "PowerShell" => field("command").map(first_line).unwrap_or(tool.into()),
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => format!("Editing {}", file()),
         "Read" => format!("Reading {}", file()),
         "Grep" | "Glob" => "Searching the code".into(),
@@ -148,28 +135,6 @@ fn describe_error(error_type: Option<&str>) -> String {
         Some(other) => format!("Stopped: {}", other.replace('_', " ")),
         None => "Stopped with an error".into(),
     }
-}
-
-/// The first line of a command given as text or as a list of words.
-fn command_line(command: &Value) -> Option<String> {
-    match command {
-        Value::String(text) => Some(first_line(text)),
-        Value::Array(words) => {
-            let words: Vec<&str> = words.iter().filter_map(Value::as_str).collect();
-            Some(first_line(&words.join(" ")))
-        }
-        _ => None,
-    }
-}
-
-/// The first file a patch touches: "*** Update File: src/main.rs" gives "main.rs".
-fn patched_file(patch: &str) -> Option<String> {
-    patch.lines().find_map(|line| {
-        ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
-            .iter()
-            .find_map(|prefix| line.strip_prefix(prefix))
-            .and_then(|path| folder_name(path.trim()))
-    })
 }
 
 fn first_line(text: &str) -> String {
@@ -203,14 +168,13 @@ mod tests {
     }
 
     fn kind(extra: Value) -> Option<EventKind> {
-        to_event(input(extra), Source::ClaudeCode, None).map(|e| e.kind)
+        to_event(input(extra), None).map(|e| e.kind)
     }
 
     #[test]
     fn session_start_carries_id_pid_and_folder() {
         let event = to_event(
             input(json!({"hook_event_name": "SessionStart", "source": "startup"})),
-            Source::ClaudeCode,
             Some(18516),
         )
         .unwrap();
@@ -333,56 +297,6 @@ mod tests {
             k,
             Some(EventKind::Failed {
                 detail: Some("Hit the rate limit".into())
-            })
-        );
-    }
-
-    #[test]
-    fn codex_events_carry_the_codex_source() {
-        let event = to_event(
-            input(json!({"hook_event_name": "UserPromptSubmit", "turn_id": "t1", "prompt": "hi"})),
-            Source::Codex,
-            Some(7),
-        )
-        .unwrap();
-        assert_eq!(event.source, Source::Codex);
-        assert_eq!(event.pid, Some(7));
-    }
-
-    #[test]
-    fn esc_in_codex_is_an_interruption() {
-        assert_eq!(
-            kind(json!({"hook_event_name": "Interrupt"})),
-            Some(EventKind::Interrupted)
-        );
-    }
-
-    #[test]
-    fn a_command_given_as_words_is_joined() {
-        let k = kind(json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "shell",
-            "tool_input": {"command": ["powershell.exe", "-Command", "npm test"]}
-        }));
-        assert_eq!(
-            k,
-            Some(EventKind::Working {
-                detail: Some("powershell.exe -Command npm test".into())
-            })
-        );
-    }
-
-    #[test]
-    fn a_patch_shows_the_file_it_edits() {
-        let k = kind(json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "apply_patch",
-            "tool_input": {"command": "*** Begin Patch\n*** Update File: src/island.rs\n@@\n-a\n+b\n*** End Patch"}
-        }));
-        assert_eq!(
-            k,
-            Some(EventKind::Working {
-                detail: Some("Editing island.rs".into())
             })
         );
     }
