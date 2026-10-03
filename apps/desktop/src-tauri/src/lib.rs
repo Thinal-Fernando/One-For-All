@@ -4,6 +4,7 @@ mod fullscreen;
 mod island;
 mod plan;
 mod sessions;
+mod settings;
 mod shortcuts;
 mod topmost;
 mod transcript;
@@ -19,6 +20,7 @@ pub fn run() {
         .manage(usage::Usage::default())
         .invoke_handler(tauri::generate_handler![
             island::set_hit_area,
+            island::get_island_layout,
             sessions::get_sessions,
             sessions::focus_session,
             sessions::answer_prompt,
@@ -28,7 +30,7 @@ pub fn run() {
             let window = app
                 .get_webview_window(island::ISLAND)
                 .expect("island window is declared in tauri.conf.json");
-            island::place_top_centre(&window)?;
+            island::place(&window)?;
             island::start(app.handle(), window.clone())?;
             sessions::start(app.handle())?;
             shortcuts::start(app.handle())?;

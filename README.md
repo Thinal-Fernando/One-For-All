@@ -1,7 +1,8 @@
 # One-For-All (OFA)
 
-A Dynamic Island–style status pill for Windows that follows your Claude Code
-sessions.
+A small orb on the edge of your Windows screen that follows your Claude Code
+sessions. Hover it and it sinks into the edge with a ripple and opens the
+details.
 
 ## Layout
 
@@ -71,30 +72,37 @@ Run these from the repo root in PowerShell, after building.
 
 4. In a new terminal, in any folder, run `claude` and try:
 
-   | Do this | The pill should |
+   | Do this | The orb should |
    | --- | --- |
    | Type `hello` | show Working, then Done for 6 seconds |
-   | Ask it to create a file, then click **Allow** on the pill (or press Ctrl+Alt+Y) | pulse amber, then create the file without you touching the terminal |
+   | Ask it to create a file, then hover the orb and click **Allow** (or press Ctrl+Alt+Y) | pulse amber, then create the file without you touching the terminal |
    | Ask it to create a file, then press Ctrl+Alt+N | pass your denial to Claude |
    | Ask it to create a file and answer in the terminal | clear once Claude moves on |
    | Start a long task, then press Esc | go quiet |
    | While it works, click another app, then click the session row | bring the terminal to the front |
    | Close the terminal mid-task | mark the session Lost within about 10 seconds |
 
-If the pill doesn't react, `ofa hook` logs why:
+If the orb doesn't react, `ofa hook` logs why:
 
 ```powershell
 Get-Content "$env:LOCALAPPDATA\OFA\hook-errors.log" -Tail 10
 ```
 
-The open panel ends with your Claude plan usage. By default it is an estimate
-from Claude Code's logs on this PC. To show the exact percentages Claude shows,
-put this in `%APPDATA%\OFA\settings.json` (OFA then reads Claude Code's saved
-sign-in to ask Claude, and never changes it):
+Settings live in `%APPDATA%\OFA\settings.json` and apply within a second or two:
 
 ```json
-{ "exact_usage": true }
+{
+  "island": { "edge": "right", "size": 20 },
+  "exact_usage": true
+}
 ```
+
+- `island.edge`: `right` or `left` (halfway down that edge) or `top` (middle of
+  the top edge). `island.size`: the orb's size in pixels, 16 to 64.
+- `exact_usage`: the pop-up ends with your Claude plan usage. By default it is
+  an estimate from Claude Code's logs on this PC. Set this to `true` to show the
+  exact percentages Claude shows; OFA then reads Claude Code's saved sign-in to
+  ask Claude, and never changes it.
 
 Stop the island (Claude Code keeps working normally without it):
 

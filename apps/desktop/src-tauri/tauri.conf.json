@@ -14,8 +14,8 @@
       {
         "label": "island",
         "title": "OFA",
-        "width": 400,
-        "height": 210,
+        "width": 380,
+        "height": 440,
         "transparent": true,
         "decorations": false,
         "shadow": false,

@@ -6,17 +6,22 @@
 //! thread polls the cursor position and compares it with the area the UI
 //! reports as solid. The same thread runs the always-on-top watchdog and
 //! hides the island while a full-screen app is in front. About once a
-//! second it also checks the island is still at the top centre of the
-//! primary monitor, which moves when monitors or scaling change.
+//! second it also checks the island still sits on the edge of the primary
+//! monitor chosen in the settings, which moves when monitors, scaling or the
+//! setting change.
+//!
+//! The window is a transparent strip against that edge, big enough for the
+//! orb, the ripple it makes and the pop-up; only what the UI paints is solid.
 
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
+use crate::settings::{self, Edge, IslandSettings};
 use crate::{fullscreen, topmost};
 
 /// Label of the single island window, as declared in tauri.conf.json.
@@ -24,6 +29,14 @@ pub const ISLAND: &str = "island";
 
 /// Event sent to the UI when the island should open (`true`) or close (`false`).
 pub const HOVER_EVENT: &str = "island-hover";
+
+/// Event sent to the UI when the orb's edge or size changes.
+pub const LAYOUT_EVENT: &str = "island-layout";
+
+/// The window's size in CSS pixels: a strip along a side edge, or a band
+/// along the top, with room for the pop-up and the ripple around the orb.
+const SIDE_WINDOW: (f64, f64) = (380.0, 440.0);
+const TOP_WINDOW: (f64, f64) = (560.0, 320.0);
 
 /// How often the cursor is polled, about 30 times a second.
 const TICK: Duration = Duration::from_millis(33);
@@ -66,6 +79,8 @@ pub struct IslandState {
     /// The part of the window the UI has painted, which catches the mouse.
     hit_area: Mutex<Rect>,
     placement: Mutex<Option<Placement>>,
+    /// The orb's edge and size the UI was last told about.
+    layout: Mutex<Option<IslandSettings>>,
 }
 
 /// Called by the UI whenever the painted island changes size.
@@ -79,32 +94,71 @@ pub fn set_hit_area(state: tauri::State<'_, IslandState>, x: f64, y: f64, width:
     };
 }
 
-/// Places the island at the top centre of the primary monitor and records
+/// Tells the UI which edge the orb sits on and how big it is.
+#[tauri::command]
+pub fn get_island_layout(state: tauri::State<'_, IslandState>) -> IslandSettings {
+    state
+        .layout
+        .lock()
+        .unwrap()
+        .unwrap_or_else(|| settings::load().island)
+}
+
+/// The window's frame for `edge` on a monitor at `monitor_origin` of
+/// `monitor_size`, all in physical pixels: flush against that edge, centred
+/// along it.
+fn frame(
+    edge: Edge,
+    monitor_origin: PhysicalPosition<i32>,
+    monitor_size: PhysicalSize<u32>,
+    scale: f64,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    let (w, h) = match edge {
+        Edge::Top => TOP_WINDOW,
+        Edge::Left | Edge::Right => SIDE_WINDOW,
+    };
+    let size = PhysicalSize::new((w * scale).round() as u32, (h * scale).round() as u32);
+    let (mx, my) = (monitor_origin.x, monitor_origin.y);
+    let (mw, mh) = (monitor_size.width as i32, monitor_size.height as i32);
+    let (ww, wh) = (size.width as i32, size.height as i32);
+    let origin = match edge {
+        Edge::Right => PhysicalPosition::new(mx + mw - ww, my + (mh - wh) / 2),
+        Edge::Left => PhysicalPosition::new(mx, my + (mh - wh) / 2),
+        Edge::Top => PhysicalPosition::new(mx + (mw - ww) / 2, my),
+    };
+    (origin, size)
+}
+
+/// Places the island on the chosen edge of the primary monitor and records
 /// where it went. Does nothing if it is already there.
 ///
 /// Windows moves windows itself when a monitor is plugged in or removed, and
 /// a scaling change resizes the window, so this compares against where the
 /// window really is rather than where it was last put.
-pub fn place_top_centre(window: &WebviewWindow) -> tauri::Result<()> {
+pub fn place(window: &WebviewWindow) -> tauri::Result<()> {
     let Some(monitor) = window.primary_monitor()? else {
         return Ok(());
     };
-    let area = monitor.position();
-    let screen = monitor.size();
-    let size = window.outer_size()?;
-    let origin = PhysicalPosition::new(
-        area.x + (screen.width as i32 - size.width as i32) / 2,
-        area.y,
-    );
+    let layout = settings::load().island;
+    // The webview scales CSS pixels by the factor of the monitor the window
+    // is on; once the window is in place, that's the primary monitor's.
+    let scale = monitor.scale_factor();
+    let (origin, size) = frame(layout.edge, *monitor.position(), *monitor.size(), scale);
+    if window.outer_size()? != size {
+        window.set_size(size)?;
+    }
     if window.outer_position()? != origin {
         window.set_position(origin)?;
     }
 
-    // The webview scales CSS pixels by the factor of the monitor the window
-    // is on. Once the window is in place, that's the primary monitor's.
-    let scale = window.scale_factor()?;
     let state = window.state::<IslandState>();
     *state.placement.lock().unwrap() = Some(Placement { origin, scale });
+    let changed = state.layout.lock().unwrap().replace(layout) != Some(layout);
+    if changed {
+        if let Err(err) = window.emit_to(ISLAND, LAYOUT_EVENT, layout) {
+            eprintln!("island: could not send the layout: {err}");
+        }
+    }
     Ok(())
 }
 
@@ -145,7 +199,7 @@ fn poll(app: AppHandle, window: WebviewWindow) {
         }
 
         if tick.is_multiple_of(PLACE_EVERY) {
-            if let Err(err) = place_top_centre(&window) {
+            if let Err(err) = place(&window) {
                 eprintln!("island: could not place the island: {err}");
             }
         }
@@ -208,7 +262,40 @@ fn cursor_inside(state: &IslandState) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Rect;
+    use super::*;
+
+    /// A 1920x1080 monitor at 150% scaling, to the right of another one.
+    fn on_second_monitor(edge: Edge) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+        frame(
+            edge,
+            PhysicalPosition::new(1920, 0),
+            PhysicalSize::new(1920, 1080),
+            1.5,
+        )
+    }
+
+    #[test]
+    fn the_right_edge_strip_is_flush_and_centred() {
+        let (origin, size) = on_second_monitor(Edge::Right);
+        assert_eq!(size, PhysicalSize::new(570, 660));
+        assert_eq!(
+            origin,
+            PhysicalPosition::new(1920 + 1920 - 570, (1080 - 660) / 2)
+        );
+    }
+
+    #[test]
+    fn the_left_edge_strip_starts_at_the_monitor() {
+        let (origin, _) = on_second_monitor(Edge::Left);
+        assert_eq!(origin.x, 1920);
+    }
+
+    #[test]
+    fn the_top_band_is_centred_along_the_top() {
+        let (origin, size) = on_second_monitor(Edge::Top);
+        assert_eq!(size, PhysicalSize::new(840, 480));
+        assert_eq!(origin, PhysicalPosition::new(1920 + (1920 - 840) / 2, 0));
+    }
 
     #[test]
     fn rect_contains_its_edges_but_not_beyond() {

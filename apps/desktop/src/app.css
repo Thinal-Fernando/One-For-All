@@ -1,4 +1,4 @@
-/* The window itself is transparent; only the pill is painted. */
+/* The window itself is transparent; only the orb and its pop-up are painted. */
 html,
 body {
   margin: 0;

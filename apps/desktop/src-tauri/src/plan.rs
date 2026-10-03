@@ -32,27 +32,9 @@ pub struct PlanUsage {
     pub weekly: Option<Limit>,
 }
 
-/// Whether the opt-in is on: `"exact_usage": true` in
-/// `%APPDATA%\OFA\settings.json`. Read each time, so a change applies
-/// without a restart.
+/// Whether the opt-in is on: `"exact_usage": true` in OFA's settings.
 pub fn enabled() -> bool {
-    #[derive(Deserialize, Default)]
-    struct Settings {
-        #[serde(default)]
-        exact_usage: bool,
-    }
-    let Some(path) = settings_path() else {
-        return false;
-    };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Settings>(text.trim_start_matches('\u{feff}')).ok())
-        .is_some_and(|s| s.exact_usage)
-}
-
-fn settings_path() -> Option<PathBuf> {
-    let token = ofa_protocol::token_path()?;
-    Some(token.with_file_name("settings.json"))
+    crate::settings::load().exact_usage
 }
 
 /// Asks Claude for the current limits. `Err` explains why not, briefly.
