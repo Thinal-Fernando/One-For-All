@@ -52,6 +52,16 @@ pub struct Sessions {
     read_to: Mutex<HashMap<SessionKey, u64>>,
     /// Hooks waiting for an answer, by session.
     waiting: Mutex<HashMap<SessionKey, Waiter>>,
+    /// Each session's turn, as far as its transcript tells.
+    turns: Mutex<HashMap<SessionKey, Turn>>,
+}
+
+/// Where a session's current turn starts in its transcript, and how many
+/// tokens its last finished turn used.
+#[derive(Default)]
+struct Turn {
+    from: Option<u64>,
+    tokens: Option<u64>,
 }
 
 /// One session as the UI sees it.
@@ -68,6 +78,10 @@ pub struct SessionView {
     pub answerable: bool,
     /// The whole permission request, while one is waiting.
     pub request: Option<Request>,
+    /// How long the turn took, once it has finished or failed.
+    pub took_secs: Option<u64>,
+    /// Tokens the finished or failed turn used, if its transcript says.
+    pub tokens: Option<u64>,
 }
 
 impl Sessions {
@@ -77,22 +91,43 @@ impl Sessions {
             source: event.source,
             id: event.session_id.clone(),
         };
+        let find = |store: &Store| store.sessions().iter().find(|s| s.key == key).cloned();
         let mut store = self.store.lock().unwrap();
+        let started_before = find(&store).and_then(|s| s.turn_started);
         let changed = store.apply(event, Instant::now());
-        let transcript = store
-            .sessions()
-            .iter()
-            .find(|s| s.key == key)
-            .and_then(|s| s.transcript.clone());
+        let session = find(&store);
         drop(store);
+        let transcript = session.as_ref().and_then(|s| s.transcript.clone());
+        let end = transcript
+            .as_deref()
+            .and_then(|path| transcript::end_of(Path::new(path)));
 
         // Whatever the transcript says from here on is newer than this event.
         let mut read_to = self.read_to.lock().unwrap();
-        match transcript.and_then(|path| transcript::end_of(Path::new(&path))) {
-            Some(end) => read_to.insert(key, end),
+        match end {
+            Some(end) => read_to.insert(key.clone(), end),
             None => read_to.remove(&key),
         };
         drop(read_to);
+
+        // A turn's tokens are the replies written between its start and end.
+        let started = session.as_ref().and_then(|s| s.turn_started);
+        let finished = started_before.is_some() && session.is_some_and(|s| s.last_turn.is_some());
+        let mut turns = self.turns.lock().unwrap();
+        if started.is_some() && started != started_before {
+            // No transcript yet means everything in it will be this turn.
+            let from = transcript.as_ref().map(|_| end.unwrap_or(0));
+            turns.insert(key, Turn { from, tokens: None });
+        } else if finished {
+            let from = turns.get(&key).and_then(|t| t.from);
+            let tokens = transcript
+                .zip(from)
+                .and_then(|(path, from)| transcript::read_new(Path::new(&path), from).ok())
+                .map(|(lines, _)| transcript::tokens_used(&lines))
+                .filter(|&tokens| tokens > 0);
+            turns.insert(key, Turn { from: None, tokens });
+        }
+        drop(turns);
 
         if changed {
             self.publish(app);
@@ -208,6 +243,10 @@ impl Sessions {
             let store = self.store.lock().unwrap();
             let mut read_to = self.read_to.lock().unwrap();
             read_to.retain(|key, _| store.sessions().iter().any(|s| &s.key == key));
+            self.turns
+                .lock()
+                .unwrap()
+                .retain(|key, _| store.sessions().iter().any(|s| &s.key == key));
             store
                 .sessions()
                 .iter()
@@ -247,10 +286,19 @@ impl Sessions {
     pub fn views(&self) -> Vec<SessionView> {
         let store = self.store.lock().unwrap();
         let waiting = self.waiting.lock().unwrap();
+        let turns = self.turns.lock().unwrap();
         store
             .sessions()
             .iter()
             .map(|s| SessionView {
+                took_secs: s
+                    .last_turn
+                    .filter(|_| matches!(s.state, SessionState::Done | SessionState::Failed))
+                    .map(|took| took.as_secs()),
+                tokens: turns
+                    .get(&s.key)
+                    .and_then(|t| t.tokens)
+                    .filter(|_| matches!(s.state, SessionState::Done | SessionState::Failed)),
                 id: view_id(&s.key),
                 source: source_label(s.key.source),
                 title: s.title.clone().unwrap_or_else(|| s.key.id.clone()),

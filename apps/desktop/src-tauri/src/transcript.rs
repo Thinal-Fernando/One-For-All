@@ -4,7 +4,10 @@
 //! press Esc mid-turn, so the island would stay on "Needs you" or "Working".
 //! It does append a line to the session's transcript straight away, which is
 //! what this looks for. Only new lines are read, never the whole file.
+//!
+//! The same lines say how many tokens a turn used, shown once it finishes.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -62,6 +65,27 @@ fn is_interruption(text: &str) -> bool {
     text.starts_with("[Request interrupted by user")
 }
 
+/// Tokens Claude's replies in these lines used, counted the same way as the
+/// plan usage estimate: input, output and cache writes, but not cache reads.
+/// A reply written as several lines counts once.
+pub fn tokens_used(lines: &str) -> u64 {
+    let mut seen = HashSet::new();
+    lines
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|entry| entry["type"] == "assistant")
+        .filter(|entry| {
+            let id = entry["message"]["id"].as_str().unwrap_or_default();
+            id.is_empty() || seen.insert(id.to_owned())
+        })
+        .map(|entry| {
+            let usage = &entry["message"]["usage"];
+            let count = |name: &str| usage[name].as_u64().unwrap_or(0);
+            count("input_tokens") + count("output_tokens") + count("cache_creation_input_tokens")
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +114,16 @@ mod tests {
     fn quoting_the_marker_in_a_reply_does_not_count() {
         let quoted = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
         assert!(!was_interrupted(quoted));
+    }
+
+    #[test]
+    fn counts_each_reply_once_and_leaves_out_cache_reads() {
+        let text = r#"{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":300,"cache_read_input_tokens":50000,"output_tokens":40}}}"#;
+        let tool = r#"{"type":"assistant","message":{"id":"msg_1","content":[{"type":"tool_use"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":300,"cache_read_input_tokens":50000,"output_tokens":40}}}"#;
+        let next = r#"{"type":"assistant","message":{"id":"msg_2","usage":{"input_tokens":1,"output_tokens":9}}}"#;
+        let lines = format!("{PROMPT}\n{text}\n{tool}\n{next}\n{REFUSED}\n");
+        assert_eq!(tokens_used(&lines), 2 + 300 + 40 + 1 + 9);
+        assert_eq!(tokens_used(""), 0);
     }
 
     #[test]

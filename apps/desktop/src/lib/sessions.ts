@@ -49,6 +49,19 @@ export interface Session {
   answerable: boolean;
   /** The whole permission request, while one is waiting. */
   request: Request | null;
+  /** How long the turn took, in seconds, once it has finished or failed. */
+  took_secs: number | null;
+  /** Tokens the finished or failed turn used, if known. */
+  tokens: number | null;
+}
+
+/** "14 s", "2 min 14 s", "1 h 5 min". */
+export function took(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes} min ${seconds % 60} s` : `${minutes} min`;
+  const rest = minutes % 60;
+  return rest ? `${Math.floor(minutes / 60)} h ${rest} min` : `${Math.floor(minutes / 60)} h`;
 }
 
 /** Most urgent first, the same order as ofa-core's IslandState. */

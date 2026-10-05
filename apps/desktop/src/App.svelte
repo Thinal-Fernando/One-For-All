@@ -3,7 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { playRipple, type Side } from "./lib/ripple";
-  import { LABELS, islandState, requestVerb, type Session } from "./lib/sessions";
+  import { LABELS, islandState, requestVerb, took, type Session } from "./lib/sessions";
   import { clockTime, level, resetsIn, tokens, type Usage } from "./lib/usage";
 
   interface Layout {
@@ -94,6 +94,19 @@
       line,
       kind: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line === "@@" ? "gap" : "",
     }));
+  }
+
+  /** "Claude Code · npm test", and for a finished or failed turn how long
+   *  it took and the tokens it used. */
+  function detailLine(session: Session) {
+    return [
+      session.source,
+      session.detail,
+      session.took_secs != null ? `took ${took(session.took_secs)}` : "",
+      session.tokens ? `${tokens(session.tokens)} tokens` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   /** "island.rs" from "C:\code\src\island.rs". */
@@ -359,7 +372,7 @@
               <span class="mark {session.state}"></span>
               <span class="text">
                 <span class="title">{session.title}</span>
-                <span class="detail">{session.source} · {session.detail}</span>
+                <span class="detail">{detailLine(session)}</span>
               </span>
               {#if !session.answerable}
                 <span class="state {session.state}">{LABELS[session.state]}</span>
