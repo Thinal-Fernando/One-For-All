@@ -35,9 +35,10 @@ pub const HOVER_EVENT: &str = "island-hover";
 pub const LAYOUT_EVENT: &str = "island-layout";
 
 /// The window's size in CSS pixels: a strip along a side edge, or a band
-/// along the top, with room for the pop-up and the ripple around the orb.
-const SIDE_WINDOW: (f64, f64) = (380.0, 440.0);
-const TOP_WINDOW: (f64, f64) = (560.0, 320.0);
+/// along the top, with room for the pop-up, the ripple around the orb, and
+/// the panel beside the pop-up that shows a permission request in full.
+const SIDE_WINDOW: (f64, f64) = (1000.0, 720.0);
+const TOP_WINDOW: (f64, f64) = (1240.0, 720.0);
 
 /// How often the cursor is polled, about 30 times a second.
 const TICK: Duration = Duration::from_millis(33);
@@ -127,7 +128,11 @@ fn frame(
         Edge::Top => TOP_WINDOW,
         Edge::Left | Edge::Right => SIDE_WINDOW,
     };
-    let size = PhysicalSize::new((w * scale).round() as u32, (h * scale).round() as u32);
+    // Never bigger than the monitor itself.
+    let size = PhysicalSize::new(
+        ((w * scale).round() as u32).min(monitor_size.width),
+        ((h * scale).round() as u32).min(monitor_size.height),
+    );
     let (mx, my) = (monitor_origin.x, monitor_origin.y);
     let (mw, mh) = (monitor_size.width as i32, monitor_size.height as i32);
     let (ww, wh) = (size.width as i32, size.height as i32);
@@ -289,11 +294,20 @@ mod tests {
     #[test]
     fn the_right_edge_strip_is_flush_and_centred() {
         let (origin, size) = on_second_monitor(Edge::Right);
-        assert_eq!(size, PhysicalSize::new(570, 660));
-        assert_eq!(
-            origin,
-            PhysicalPosition::new(1920 + 1920 - 570, (1080 - 660) / 2)
+        assert_eq!(size, PhysicalSize::new(1500, 1080));
+        assert_eq!(origin, PhysicalPosition::new(1920 + 1920 - 1500, 0));
+    }
+
+    #[test]
+    fn the_window_never_outgrows_a_small_monitor() {
+        let (origin, size) = frame(
+            Edge::Right,
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(800, 600),
+            1.0,
         );
+        assert_eq!(size, PhysicalSize::new(800, 600));
+        assert_eq!(origin, PhysicalPosition::new(0, 0));
     }
 
     #[test]
@@ -305,8 +319,8 @@ mod tests {
     #[test]
     fn the_top_band_is_centred_along_the_top() {
         let (origin, size) = on_second_monitor(Edge::Top);
-        assert_eq!(size, PhysicalSize::new(840, 480));
-        assert_eq!(origin, PhysicalPosition::new(1920 + (1920 - 840) / 2, 0));
+        assert_eq!(size, PhysicalSize::new(1860, 1080));
+        assert_eq!(origin, PhysicalPosition::new(1920 + (1920 - 1860) / 2, 0));
     }
 
     #[test]

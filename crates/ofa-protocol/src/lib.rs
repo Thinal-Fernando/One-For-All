@@ -29,8 +29,14 @@ pub const PERMISSION_PATH: &str = "/permission";
 /// running" apart from "wrong token".
 pub const HEALTH_PATH: &str = "/health";
 
-/// Largest request body the app accepts. Events are a few hundred bytes.
-pub const MAX_BODY_BYTES: usize = 64 * 1024;
+/// Largest request body the app accepts. Most events are a few hundred
+/// bytes; a permission prompt can carry up to [`MAX_REQUEST_BYTES`] of the
+/// request itself, which JSON escaping can grow.
+pub const MAX_BODY_BYTES: usize = 256 * 1024;
+
+/// Most of a permission request's [`Request::body`] the helper sends. Longer
+/// ones are cut, and the terminal still shows the whole thing.
+pub const MAX_REQUEST_BYTES: usize = 48 * 1024;
 
 /// Address of the local API. It only ever binds to loopback, so nothing
 /// outside this machine can reach it.
@@ -90,6 +96,9 @@ pub enum EventKind {
     NeedsYou {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// The whole request, for the island to show in full.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<Request>,
     },
     /// The agent finished its turn and is waiting for your next prompt.
     TurnFinished,
@@ -100,6 +109,38 @@ pub enum EventKind {
     },
     /// The session closed normally.
     SessionEnded,
+}
+
+/// Everything a permission prompt asks for, so you can read it on the island
+/// before answering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Request {
+    /// The tool that wants to run, such as "Bash" or "Edit".
+    pub tool: String,
+    /// The file it would change, for tools that change files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub format: RequestFormat,
+    /// The command, the change as diff lines, or the tool's input.
+    pub body: String,
+    /// Whether `body` was cut to [`MAX_REQUEST_BYTES`].
+    #[serde(default)]
+    pub truncated: bool,
+    /// Why Claude asked, in its own words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// How to show a [`Request::body`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RequestFormat {
+    /// A shell command.
+    Command,
+    /// Lines starting with "+" are added and "-" removed.
+    Diff,
+    /// Anything else, such as a tool's input as JSON.
+    Text,
 }
 
 /// Your answer to a permission prompt, given on the island.
@@ -154,6 +195,14 @@ mod tests {
             transcript_path: None,
             kind: EventKind::NeedsYou {
                 detail: Some("npm test".into()),
+                request: Some(Request {
+                    tool: "Bash".into(),
+                    file: None,
+                    format: RequestFormat::Command,
+                    body: "npm test".into(),
+                    truncated: false,
+                    reason: Some("Run the tests".into()),
+                }),
             },
         };
         let value = serde_json::to_value(&event).unwrap();
@@ -165,7 +214,14 @@ mod tests {
                 "pid": 4242,
                 "title": "one-for-all",
                 "event": "needs-you",
-                "detail": "npm test"
+                "detail": "npm test",
+                "request": {
+                    "tool": "Bash",
+                    "format": "command",
+                    "body": "npm test",
+                    "truncated": false,
+                    "reason": "Run the tests"
+                }
             })
         );
         assert_eq!(serde_json::from_value::<Event>(value).unwrap(), event);

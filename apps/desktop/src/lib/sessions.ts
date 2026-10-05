@@ -3,6 +3,38 @@
 
 export type SessionState = "needs-you" | "failed" | "working" | "done" | "idle" | "lost";
 
+/** A permission request in full. Matches `Request` in ofa-protocol. */
+export interface Request {
+  /** The tool that wants to run, such as "Bash" or "Edit". */
+  tool: string;
+  /** The file it would change, for tools that change files. */
+  file?: string;
+  /** command: a shell command; diff: lines starting with + or -; text: anything else. */
+  format: "command" | "diff" | "text";
+  body: string;
+  /** Whether the body was cut short; the terminal shows all of it. */
+  truncated: boolean;
+  /** Why Claude asked, in its own words. */
+  reason?: string;
+}
+
+/** "Wants to run" and the like, for the top of a request. */
+export function requestVerb(request: Request): string {
+  switch (request.tool) {
+    case "Bash":
+    case "PowerShell":
+      return "Wants to run";
+    case "Write":
+      return "Wants to write";
+    case "Edit":
+    case "MultiEdit":
+    case "NotebookEdit":
+      return "Wants to edit";
+    default:
+      return `Wants to use ${request.tool}`;
+  }
+}
+
 export interface Session {
   id: string;
   /** Which agent: "Claude Code". */
@@ -15,6 +47,8 @@ export interface Session {
   prompt: number;
   /** Whether that prompt can be answered from the island. */
   answerable: boolean;
+  /** The whole permission request, while one is waiting. */
+  request: Request | null;
 }
 
 /** Most urgent first, the same order as ofa-core's IslandState. */

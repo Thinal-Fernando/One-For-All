@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ofa_core::{SessionKey, SessionState, Store};
-use ofa_protocol::{Decision, Event, EventKind, Source};
+use ofa_protocol::{Decision, Event, EventKind, Request, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, STILL_ACTIVE};
@@ -66,6 +66,8 @@ pub struct SessionView {
     pub prompt: u64,
     /// Whether an answer from the island can reach this session's prompt.
     pub answerable: bool,
+    /// The whole permission request, while one is waiting.
+    pub request: Option<Request>,
 }
 
 impl Sessions {
@@ -257,6 +259,7 @@ impl Sessions {
                 prompt: s.prompt,
                 answerable: s.state == SessionState::NeedsYou
                     && waiting.get(&s.key).is_some_and(|(p, _)| *p == s.prompt),
+                request: s.request.clone(),
             })
             .collect()
     }

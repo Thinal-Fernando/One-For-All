@@ -6,7 +6,7 @@ pub mod usage;
 
 use std::time::{Duration, Instant};
 
-use ofa_protocol::{Event, EventKind, Source};
+use ofa_protocol::{Event, EventKind, Request, Source};
 
 /// How long a finished session shows as Done before going back to Idle.
 pub const DONE_FOR: Duration = Duration::from_secs(6);
@@ -74,6 +74,8 @@ pub struct Session {
     pub state: SessionState,
     /// One short line about what is happening, such as the waiting command.
     pub detail: Option<String>,
+    /// The whole permission request, while one is waiting.
+    pub request: Option<Request>,
     /// When `state` last changed.
     pub since: Instant,
     /// Counts the permission prompts this session has shown. An answer from
@@ -129,6 +131,7 @@ impl Store {
                     transcript: None,
                     state: SessionState::Idle,
                     detail: None,
+                    request: None,
                     since: now,
                     prompt: 0,
                 });
@@ -147,22 +150,30 @@ impl Store {
             session.transcript = event.transcript_path;
         }
 
+        let mut request = None;
         let next = match event.kind {
             // Only creates the session; a late start must not reset its state.
             EventKind::SessionStarted => None,
             EventKind::Working { detail } => Some((SessionState::Working, detail)),
             // Claude Code's permission notice doesn't say what is waiting, but
             // the tool event just before it did, so keep that line.
-            EventKind::NeedsYou { detail } => Some((
-                SessionState::NeedsYou,
-                detail.or_else(|| session.detail.clone()),
-            )),
+            EventKind::NeedsYou {
+                detail,
+                request: asked,
+            } => {
+                request = asked;
+                Some((
+                    SessionState::NeedsYou,
+                    detail.or_else(|| session.detail.clone()),
+                ))
+            }
             EventKind::TurnFinished => Some((SessionState::Done, None)),
             EventKind::Failed { detail } => Some((SessionState::Failed, detail)),
             EventKind::SessionEnded => unreachable!("handled above"),
         };
 
         if let Some((state, detail)) = next {
+            session.request = request;
             if state != session.state {
                 session.since = now;
                 if state == SessionState::NeedsYou {
@@ -212,6 +223,7 @@ impl Store {
             match s.state {
                 SessionState::Working | SessionState::NeedsYou if !is_alive(pid) => {
                     s.state = SessionState::Lost;
+                    s.request = None;
                     s.detail = Some("Process ended without saying goodbye".into());
                     s.since = now;
                     changed = true;
@@ -260,6 +272,7 @@ impl Store {
             .find(|s| &s.key == key)
             .expect("checked above");
         s.state = SessionState::Working;
+        s.request = None;
         if !allowed {
             s.detail = None;
         }
@@ -280,6 +293,7 @@ impl Store {
         }
         s.state = SessionState::Idle;
         s.detail = None;
+        s.request = None;
         s.since = now;
         true
     }
@@ -317,6 +331,7 @@ mod tests {
     fn needs_you(detail: &str) -> EventKind {
         EventKind::NeedsYou {
             detail: Some(detail.into()),
+            request: None,
         }
     }
 
@@ -384,7 +399,16 @@ mod tests {
         let t = Instant::now();
         let mut store = Store::new();
         store.apply(event("a", working("npm test")), t);
-        store.apply(event("a", EventKind::NeedsYou { detail: None }), t);
+        store.apply(
+            event(
+                "a",
+                EventKind::NeedsYou {
+                    detail: None,
+                    request: None,
+                },
+            ),
+            t,
+        );
         assert_eq!(store.sessions()[0].state, SessionState::NeedsYou);
         assert_eq!(store.sessions()[0].detail.as_deref(), Some("npm test"));
     }
@@ -524,7 +548,16 @@ mod tests {
         store.apply(event("a", needs_you("one")), t);
         assert_eq!(prompt_of(&store, "a"), 1);
         // A repeat of the same prompt's event isn't a new prompt.
-        store.apply(event("a", EventKind::NeedsYou { detail: None }), t);
+        store.apply(
+            event(
+                "a",
+                EventKind::NeedsYou {
+                    detail: None,
+                    request: None,
+                },
+            ),
+            t,
+        );
         assert_eq!(prompt_of(&store, "a"), 1);
         store.apply(event("a", working("one")), t);
         store.apply(event("a", needs_you("two")), t);
@@ -648,5 +681,49 @@ mod tests {
         store.reap(t, |_| false);
         store.apply(event("a", working("y")), t);
         assert_eq!(state_of(&store, "a"), Some(SessionState::Working));
+    }
+
+    #[test]
+    fn the_whole_request_shows_only_while_it_waits() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        let request = Request {
+            tool: "Bash".into(),
+            file: None,
+            format: ofa_protocol::RequestFormat::Command,
+            body: "npm test\nnpm run lint".into(),
+            truncated: false,
+            reason: Some("Run the checks".into()),
+        };
+        store.apply(event("a", working("npm test")), t);
+        store.apply(
+            event(
+                "a",
+                EventKind::NeedsYou {
+                    detail: None,
+                    request: Some(request.clone()),
+                },
+            ),
+            t,
+        );
+        assert_eq!(store.sessions()[0].request.as_ref(), Some(&request));
+
+        let key = store.sessions()[0].key.clone();
+        assert!(store.answered(&key, 1, true, t));
+        assert_eq!(store.sessions()[0].request, None);
+
+        // A prompt answered in the terminal clears it too.
+        store.apply(
+            event(
+                "a",
+                EventKind::NeedsYou {
+                    detail: None,
+                    request: Some(request),
+                },
+            ),
+            t,
+        );
+        store.apply(event("a", working("npm test")), t);
+        assert_eq!(store.sessions()[0].request, None);
     }
 }

@@ -3,7 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { playRipple, type Side } from "./lib/ripple";
-  import { LABELS, islandState, type Session } from "./lib/sessions";
+  import { LABELS, islandState, requestVerb, type Session } from "./lib/sessions";
   import { clockTime, level, resetsIn, tokens, type Usage } from "./lib/usage";
 
   interface Layout {
@@ -17,6 +17,14 @@
   const POP_MARGIN = 12;
   /** Extra room around the orb that still counts as hovering it, in px. */
   const HIT_SLACK = 8;
+  /** Gap between the pop-up and the request panel beside it, in px. */
+  const PEEK_GAP = 10;
+  /** Width of the request panel, and the most it grows to when enlarged, in px. */
+  const PEEK_WIDTH = 420;
+  const PEEK_BIG_WIDTH = 680;
+  /** How long the request panel stays after the cursor leaves its row, so
+   *  the cursor can cross the gap to it. */
+  const PEEK_LINGER = 220;
 
   // The Rust side polls the cursor and tells us when to open, because a
   // click-through window never receives hover events of its own.
@@ -32,14 +40,66 @@
   let phase = $state<"rest" | "sinking" | "open" | "rising">("rest");
   let landed = $state(false);
 
+  // The session whose permission request is shown in full beside the
+  // pop-up, while its row or the panel itself is hovered.
+  let peekId = $state<string | null>(null);
+  let peekRow = $state<HTMLElement | null>(null);
+  let big = $state(false);
+  let peekTimer: ReturnType<typeof setTimeout> | undefined;
+
   let orb: HTMLButtonElement;
   let pop: HTMLDivElement;
+  let peekEl: HTMLDivElement;
   let canvas: HTMLCanvasElement;
   let stopRipple = () => {};
   let timers: ReturnType<typeof setTimeout>[] = [];
 
   const current = $derived(islandState(sessions));
   const active = $derived(sessions.filter((s) => s.state !== "idle"));
+  const peek = $derived(
+    phase === "open" ? active.find((s) => s.id === peekId && s.request) : undefined,
+  );
+
+  // What the panel shows: the hovered request, or the last one while the
+  // panel fades out, so it doesn't go blank as it goes.
+  let lastPeek = $state<Session | undefined>(undefined);
+  $effect(() => {
+    if (peek) lastPeek = peek;
+  });
+  const shown = $derived(peek ?? lastPeek);
+
+  function showPeek(session: Session, row: HTMLElement) {
+    clearTimeout(peekTimer);
+    if (!session.request) return hidePeek();
+    if (peekId !== session.id) big = false;
+    peekId = session.id;
+    peekRow = row;
+  }
+
+  function stayPeek() {
+    clearTimeout(peekTimer);
+  }
+
+  function hidePeek() {
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => {
+      peekId = null;
+      big = false;
+    }, PEEK_LINGER);
+  }
+
+  /** A diff's lines with how each one should look. */
+  function diffLines(body: string) {
+    return body.split("\n").map((line) => ({
+      line,
+      kind: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line === "@@" ? "gap" : "",
+    }));
+  }
+
+  /** "island.rs" from "C:\code\src\island.rs". */
+  function fileName(path: string) {
+    return path.split(/[\\/]/).pop() || path;
+  }
 
   // Where the orb rests, and where it goes when it sinks into its edge.
   const rest = $derived.by(() => {
@@ -89,6 +149,9 @@
   function closeAndRise() {
     if (phase === "rest" || phase === "rising") return;
     clearTimers();
+    clearTimeout(peekTimer);
+    peekId = null;
+    big = false;
     phase = "rising";
     later(140, () => (landed = false));
     later(560, () => (phase = "rest"));
@@ -113,6 +176,31 @@
       const top = clamp(rest.y + layout.size / 2 - ph / 2, POP_MARGIN, height - ph - POP_MARGIN);
       popStyle = `${layout.edge}: ${POP_MARGIN}px; top: ${top}px; transform-origin: ${layout.edge} center;`;
     }
+  }
+
+  // The request panel sits beside the pop-up, on the side away from the
+  // screen edge, level with the hovered row. Enlarged, it takes all the room
+  // on that side.
+  let peekStyle = $state("");
+  function placePeek() {
+    if (!pop || !peekEl || !peek) return;
+    const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(lo, v), hi);
+    const popLeft = pop.offsetLeft;
+    const popRight = popLeft + pop.offsetWidth;
+    const onLeft = layout.edge === "right";
+    const room = onLeft ? popLeft - PEEK_GAP - POP_MARGIN : width - popRight - PEEK_GAP - POP_MARGIN;
+    const w = Math.max(0, Math.min(big ? PEEK_BIG_WIDTH : PEEK_WIDTH, room));
+    const x = onLeft ? popLeft - PEEK_GAP - w : popRight + PEEK_GAP;
+    let vertical: string;
+    if (big) {
+      vertical = `top: ${POP_MARGIN}px; height: ${height - POP_MARGIN * 2}px;`;
+    } else {
+      // The window fills the stage, so on-screen coordinates are window ones.
+      const rowTop = peekRow ? peekRow.getBoundingClientRect().top - 12 : POP_MARGIN;
+      const top = clamp(rowTop, POP_MARGIN, height - peekEl.offsetHeight - POP_MARGIN);
+      vertical = `top: ${top}px; max-height: ${height - POP_MARGIN * 2}px;`;
+    }
+    peekStyle = `left: ${x}px; width: ${w}px; ${vertical} transform-origin: ${onLeft ? "right" : "left"} center;`;
   }
 
   // Rust only treats what is painted as solid: the orb at rest, and while
@@ -145,14 +233,28 @@
         width: Math.max(box.x + box.width, p.x + p.width) - x,
         height: Math.max(box.y + box.height, p.y + p.height) - y,
       };
+      // The request panel too, and the gap between it and the pop-up, so
+      // the cursor can move across to it and scroll it.
+      if (peek && peekEl) {
+        const q = { x: peekEl.offsetLeft, y: peekEl.offsetTop, width: peekEl.offsetWidth, height: peekEl.offsetHeight };
+        const x = Math.min(box.x, q.x);
+        const y = Math.min(box.y, q.y);
+        box = {
+          x,
+          y,
+          width: Math.max(box.x + box.width, q.x + q.width) - x,
+          height: Math.max(box.y + box.height, q.y + q.height) - y,
+        };
+      }
     }
     invoke("set_hit_area", box);
   }
 
   $effect(() => {
     // Re-run whenever any of these change.
-    void [phase, layout.edge, layout.size, width, height, active.length, usage];
+    void [phase, layout.edge, layout.size, width, height, active.length, usage, peek, peekRow, big];
     placePop();
+    placePeek();
     queueMicrotask(reportHitArea);
   });
 
@@ -164,9 +266,11 @@
     window.addEventListener("resize", onResize);
     const popObserver = new ResizeObserver(() => {
       placePop();
+      placePeek();
       reportHitArea();
     });
     popObserver.observe(pop);
+    popObserver.observe(peekEl);
 
     const unlisten = listen<boolean>("island-hover", (event) => {
       open = event.payload;
@@ -196,6 +300,7 @@
       window.removeEventListener("resize", onResize);
       popObserver.disconnect();
       clearTimers();
+      clearTimeout(peekTimer);
       stopRipple();
       unlisten.then((stop) => stop());
       unlistenLayout.then((stop) => stop());
@@ -240,7 +345,12 @@
       </div>
       <ul class="rows">
         {#each active as session (session.id)}
-          <li class="item">
+          <li
+            class="item"
+            class:peeking={peek?.id === session.id}
+            onmouseenter={(e) => showPeek(session, e.currentTarget)}
+            onmouseleave={hidePeek}
+          >
             <button
               class="row"
               title={session.answerable ? undefined : "Show this session's terminal"}
@@ -323,6 +433,64 @@
         />
       </svg>
     </button>
+  </div>
+
+  <!-- The waiting request in full, with Claude's reason, beside the pop-up. -->
+  <div
+    class="peek"
+    class:open={!!peek}
+    class:big
+    style={peekStyle}
+    bind:this={peekEl}
+    role="dialog"
+    aria-label="Permission request"
+    tabindex="-1"
+    onmouseenter={stayPeek}
+    onmouseleave={hidePeek}
+  >
+    {#if shown?.request}
+      {@const s = shown}
+      {@const request = shown.request}
+      <div class="peek-head">
+        <span class="peek-what">
+          <b>{requestVerb(request)}</b>
+          <span>{s.title}</span>
+        </span>
+        <button
+          class="grow"
+          title={big ? "Make smaller" : "Make bigger"}
+          aria-label={big ? "Make smaller" : "Make bigger"}
+          onclick={() => (big = !big)}
+        >
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+            {#if big}
+              <path d="M5 1v4H1M7 11V7h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            {:else}
+              <path d="M1 5V1h4M11 7v4H7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            {/if}
+          </svg>
+        </button>
+      </div>
+      {#if request.file}
+        <div class="peek-file" title={request.file}>{fileName(request.file)}</div>
+      {/if}
+      <pre class="code {request.format}">{#if request.format === "diff"}{#each diffLines(request.body) as { line, kind }}<span class="ln {kind}">{line || " "}</span>{/each}{:else}{request.body}{/if}</pre>
+      {#if request.truncated}
+        <p class="cut">Cut short here. The terminal shows the whole request.</p>
+      {/if}
+      {#if request.reason}
+        <div class="why">
+          <span class="why-label">Why it asked:</span>
+          {request.reason}
+        </div>
+      {/if}
+      {#if s.answerable}
+        <div class="peek-answers">
+          <button class="answer deny" onclick={() => answer(s, false)}>Deny</button>
+          <button class="answer allow" onclick={() => answer(s, true)}>Allow</button>
+        </div>
+      {/if}
+    {/if}
   </div>
 </div>
 
@@ -784,6 +952,165 @@
     background: var(--red);
   }
 
+  .item.peeking .row {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  /* ---------- the request panel ---------- */
+  .peek {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 12px 14px 14px;
+    background: #0b0c0e;
+    border-radius: 20px;
+    filter: drop-shadow(0 0 0.6px rgba(255, 255, 255, 0.4)) drop-shadow(0 18px 20px rgba(0, 0, 0, 0.45));
+    opacity: 0;
+    transform: scale(0.96);
+    pointer-events: none;
+    transition:
+      transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.12),
+      opacity 140ms ease;
+  }
+
+  .peek.open {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+
+  .peek-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .peek-what {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--pop-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .peek-what b {
+    color: var(--amber);
+    font-size: 13px;
+  }
+
+  .grow {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--pop-muted);
+    cursor: pointer;
+  }
+
+  .grow:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f1f2f4;
+  }
+
+  .peek-file {
+    font: 11.5px ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: #c4cad4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .code {
+    margin: 0;
+    padding: 10px 12px;
+    max-height: 300px;
+    min-height: 0;
+    overflow: auto;
+    border-radius: 10px;
+    background: #16181c;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: #e6e8eb;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  .code,
+  .why {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+
+  .peek.big .code {
+    flex: 1;
+    max-height: none;
+  }
+
+  .ln {
+    display: block;
+    margin: 0 -12px;
+    padding: 0 12px;
+  }
+
+  .ln.add {
+    background: rgba(74, 222, 128, 0.1);
+    color: #b9f5cf;
+  }
+
+  .ln.del {
+    background: rgba(248, 113, 113, 0.1);
+    color: #fbc4c4;
+  }
+
+  .ln.gap {
+    color: var(--pop-muted);
+  }
+
+  .cut {
+    margin: 0;
+    font-size: 11px;
+    color: var(--pop-muted);
+  }
+
+  .why {
+    flex: none;
+    max-height: 120px;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #d6dae0;
+    white-space: pre-wrap;
+    user-select: text;
+  }
+
+  .peek.big .why {
+    max-height: 30%;
+  }
+
+  .why-label {
+    font-weight: 600;
+    color: #f1f2f4;
+  }
+
+  .peek-answers {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
   @keyframes spin {
     to {
       transform: rotate(360deg);
@@ -793,7 +1120,8 @@
   @media (prefers-reduced-motion: reduce) {
     .orb,
     .orb.rising,
-    .pop {
+    .pop,
+    .peek {
       transition-duration: 1ms;
     }
     .orb .dot,
