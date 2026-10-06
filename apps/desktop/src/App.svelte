@@ -96,13 +96,16 @@
     }));
   }
 
-  /** "Claude Code · npm test", and for a finished or failed turn how long
-   *  it took and the tokens it used. */
+  /** "Claude Code · npm test". */
   function detailLine(session: Session) {
+    return [session.source, session.detail].filter(Boolean).join(" · ");
+  }
+
+  /** "1min 20sec · 48K tokens" for a finished or failed turn, or "" if
+   *  nothing is known about it. */
+  function turnLine(session: Session) {
     return [
-      session.source,
-      session.detail,
-      session.took_secs != null ? `took ${took(session.took_secs)}` : "",
+      session.took_secs != null ? took(session.took_secs) : "",
       session.tokens ? `${tokens(session.tokens)} tokens` : "",
     ]
       .filter(Boolean)
@@ -375,7 +378,12 @@
                 <span class="detail">{detailLine(session)}</span>
               </span>
               {#if !session.answerable}
-                <span class="state {session.state}">{LABELS[session.state]}</span>
+                <span class="end">
+                  <span class="state {session.state}">{LABELS[session.state]}</span>
+                  {#if turnLine(session)}
+                    <span class="turn">{turnLine(session)}</span>
+                  {/if}
+                </span>
               {/if}
             </button>
             {#if session.answerable}
@@ -383,6 +391,17 @@
                 <button class="answer deny" onclick={() => answer(session, false)}>Deny</button>
                 <button class="answer allow" onclick={() => answer(session, true)}>Allow</button>
               </span>
+            {:else if session.state === "done"}
+              <button
+                class="dismiss done"
+                title="Got it"
+                aria-label="Clear {session.title}"
+                onclick={() => invoke("dismiss_session", { id: session.id })}
+              >
+                <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                  <path d="M1.5 5.3l2.4 2.4L8.5 2.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
             {:else if session.state === "failed" || session.state === "lost"}
               <button
                 class="dismiss"
@@ -810,9 +829,23 @@
     text-overflow: ellipsis;
   }
 
+  .end {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+  }
+
   .state {
     font-size: 11.5px;
     font-weight: 600;
+  }
+
+  .turn {
+    font-size: 11px;
+    color: var(--pop-muted);
+    white-space: nowrap;
   }
 
   .empty {
@@ -883,6 +916,11 @@
   .dismiss:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #f1f2f4;
+  }
+
+  .dismiss.done:hover {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--green);
   }
 
   .answers {

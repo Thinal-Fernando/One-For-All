@@ -115,7 +115,7 @@ Run these from the repo root in PowerShell, after building.
 
    | Do this | The orb should |
    | --- | --- |
-   | Type `hello` | show Working, then Done for 6 seconds |
+   | Type `hello` | show Working, then Done until you tick it off |
    | Ask it to create a file, then hover the orb and click **Allow** (or press Ctrl+Alt+Y) | pulse amber, then create the file without you touching the terminal |
    | Ask it to create a file, then press Ctrl+Alt+N | pass your denial to Claude |
    | Ask it to create a file and answer in the terminal | clear once Claude moves on |

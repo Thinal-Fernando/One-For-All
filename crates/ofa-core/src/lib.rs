@@ -8,9 +8,6 @@ use std::time::{Duration, Instant};
 
 use ofa_protocol::{Event, EventKind, Request, Source};
 
-/// How long a finished session shows as Done before going back to Idle.
-pub const DONE_FOR: Duration = Duration::from_secs(6);
-
 /// How long a Lost session stays listed before it is dropped.
 pub const LOST_FOR: Duration = Duration::from_secs(60);
 
@@ -82,6 +79,11 @@ pub struct Session {
     /// the island names the prompt it was for, so a click that arrives after
     /// that prompt was answered elsewhere can't land on the next one.
     pub prompt: u64,
+    /// When the turn under way started: your prompt, or the first sign of
+    /// work after the session was idle.
+    pub turn_started: Option<Instant>,
+    /// How long the last turn took, once it has finished or failed.
+    pub last_turn: Option<Duration>,
 }
 
 /// Every known session, in the order they first appeared.
@@ -134,6 +136,8 @@ impl Store {
                     request: None,
                     since: now,
                     prompt: 0,
+                    turn_started: None,
+                    last_turn: None,
                 });
                 self.sessions.last_mut().expect("just pushed")
             }
@@ -179,6 +183,16 @@ impl Store {
                 if state == SessionState::NeedsYou {
                     session.prompt += 1;
                 }
+                let busy = |s| matches!(s, SessionState::Working | SessionState::NeedsYou);
+                if busy(state) && !busy(session.state) {
+                    session.turn_started = Some(now);
+                    session.last_turn = None;
+                } else if matches!(state, SessionState::Done | SessionState::Failed) {
+                    session.last_turn = session
+                        .turn_started
+                        .take()
+                        .map(|started| now.saturating_duration_since(started));
+                }
             }
             session.state = state;
             session.detail = detail;
@@ -187,21 +201,14 @@ impl Store {
         index.is_none() || *session != before
     }
 
-    /// Moves sessions on as time passes: Done becomes Idle after
-    /// [`DONE_FOR`], and Lost sessions are dropped after [`LOST_FOR`].
+    /// Drops Lost sessions after [`LOST_FOR`]. A Done session stays until
+    /// you clear it, so a finished turn can't go by unnoticed.
     /// Returns whether anything changed.
     pub fn expire(&mut self, now: Instant) -> bool {
         let mut changed = false;
         self.sessions.retain_mut(|s| {
             let age = now.saturating_duration_since(s.since);
             match s.state {
-                SessionState::Done if age >= DONE_FOR => {
-                    s.state = SessionState::Idle;
-                    s.detail = None;
-                    s.since = now;
-                    changed = true;
-                    true
-                }
                 SessionState::Lost if age >= LOST_FOR => {
                     changed = true;
                     false
@@ -294,6 +301,23 @@ impl Store {
         s.state = SessionState::Idle;
         s.detail = None;
         s.request = None;
+        s.turn_started = None;
+        s.since = now;
+        true
+    }
+
+    /// You have seen a Done session: it goes back to Idle and leaves the
+    /// list, but is kept, since its agent is still running. Returns whether
+    /// it was Done.
+    pub fn seen(&mut self, key: &SessionKey, now: Instant) -> bool {
+        let Some(s) = self.sessions.iter_mut().find(|s| &s.key == key) else {
+            return false;
+        };
+        if s.state != SessionState::Done {
+            return false;
+        }
+        s.state = SessionState::Idle;
+        s.detail = None;
         s.since = now;
         true
     }
@@ -466,29 +490,21 @@ mod tests {
     }
 
     #[test]
-    fn done_turns_idle_after_six_seconds() {
+    fn done_stays_until_you_have_seen_it() {
         let t = Instant::now();
         let mut store = Store::new();
         store.apply(event("a", EventKind::TurnFinished), t);
-        assert!(!store.expire(t + Duration::from_millis(5_999)));
+        assert!(!store.expire(t + Duration::from_secs(24 * 60 * 60)));
         assert_eq!(store.island_state(), Done);
-        assert!(store.expire(t + DONE_FOR));
+
+        assert!(store.seen(&key("a"), t));
         assert_eq!(state_of(&store, "a"), Some(SessionState::Idle));
         assert_eq!(store.island_state(), Idle);
-    }
-
-    #[test]
-    fn done_timer_restarts_with_each_finish() {
-        let t = Instant::now();
-        let mut store = Store::new();
-        store.apply(event("a", EventKind::TurnFinished), t);
-        store.apply(event("a", working("x")), t + Duration::from_secs(4));
-        store.apply(
-            event("a", EventKind::TurnFinished),
-            t + Duration::from_secs(5),
-        );
-        store.expire(t + Duration::from_secs(10));
-        assert_eq!(state_of(&store, "a"), Some(SessionState::Done));
+        // Seeing it again, or a session that isn't Done, changes nothing.
+        assert!(!store.seen(&key("a"), t));
+        store.apply(event("a", working("x")), t);
+        assert!(!store.seen(&key("a"), t));
+        assert!(!store.seen(&key("missing"), t));
     }
 
     #[test]
@@ -725,5 +741,48 @@ mod tests {
         );
         store.apply(event("a", working("npm test")), t);
         assert_eq!(store.sessions()[0].request, None);
+    }
+
+    #[test]
+    fn a_finished_turn_knows_how_long_it_took() {
+        let t = Instant::now();
+        let secs = Duration::from_secs;
+        let mut store = Store::new();
+        store.apply(event("a", EventKind::SessionStarted), t);
+        store.apply(event("a", working("Thinking")), t + secs(1));
+        // Waiting on you and working again are all part of the same turn.
+        store.apply(event("a", needs_you("npm test")), t + secs(5));
+        store.apply(event("a", working("npm test")), t + secs(30));
+        assert_eq!(store.sessions()[0].last_turn, None);
+        store.apply(event("a", EventKind::TurnFinished), t + secs(91));
+        assert_eq!(store.sessions()[0].last_turn, Some(secs(90)));
+
+        // The next prompt starts a new turn, and a failure ends it too.
+        store.apply(event("a", working("Thinking")), t + secs(100));
+        assert_eq!(store.sessions()[0].last_turn, None);
+        store.apply(
+            event(
+                "a",
+                EventKind::Failed {
+                    detail: Some("Hit the rate limit".into()),
+                },
+            ),
+            t + secs(103),
+        );
+        assert_eq!(store.sessions()[0].last_turn, Some(secs(3)));
+    }
+
+    #[test]
+    fn a_stopped_turn_has_no_duration() {
+        let t = Instant::now();
+        let mut store = Store::new();
+        store.apply(event("a", working("Thinking")), t);
+        let key = store.sessions()[0].key.clone();
+        store.interrupt(&key, t + Duration::from_secs(4));
+        store.apply(
+            event("a", EventKind::TurnFinished),
+            t + Duration::from_secs(9),
+        );
+        assert_eq!(store.sessions()[0].last_turn, None);
     }
 }
