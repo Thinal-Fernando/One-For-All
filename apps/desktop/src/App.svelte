@@ -510,7 +510,7 @@
 <style>
   .stage {
     --orb: #050506;
-    --idle: #8b919b;
+    --idle: #e3e6ea;
     --amber: #f5b83d;
     --red: #f87171;
     --blue: #6ea0ff;
@@ -611,16 +611,17 @@
     animation: breathe 1.8s ease-in-out infinite;
   }
 
-  /* Idle: a slow, soft fade in and out, like breathing while asleep. */
+  /* Idle: a slow, soft fade in and out, like breathing while asleep. It
+     never fades far, so the dot stays easy to see on a dark background. */
   @keyframes rest-breathe {
     0%,
     100% {
       transform: scale(0.8);
-      opacity: 0.35;
+      opacity: 0.6;
     }
     50% {
       transform: scale(1);
-      opacity: 0.9;
+      opacity: 1;
     }
   }
 
