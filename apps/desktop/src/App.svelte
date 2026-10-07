@@ -361,14 +361,13 @@
       </div>
       <ul class="rows">
         {#each active as session (session.id)}
-          <li
-            class="item"
-            class:peeking={peek?.id === session.id}
-            onmouseenter={(e) => showPeek(session, e.currentTarget)}
-            onmouseleave={hidePeek}
-          >
+          <li class="item" class:peeking={peek?.id === session.id}>
+            <!-- Only the row itself opens the request panel, not the
+                 answer buttons beside it. -->
             <button
               class="row"
+              onmouseenter={(e) => showPeek(session, e.currentTarget)}
+              onmouseleave={hidePeek}
               title={session.answerable ? undefined : "Show this session's terminal"}
               onclick={() => invoke("focus_session", { id: session.id })}
             >
@@ -937,6 +936,10 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
+    transition:
+      filter 150ms ease,
+      background 150ms ease,
+      color 150ms ease;
   }
 
   .answer.allow {
@@ -949,8 +952,14 @@
     color: #f2f2f2;
   }
 
-  .answer:hover {
+  .answer.allow:hover {
     filter: brightness(1.15);
+  }
+
+  /* Brightening barely shows on the grey button, so it warms to red. */
+  .answer.deny:hover {
+    background: rgba(248, 113, 113, 0.22);
+    color: #fecaca;
   }
 
   .plan,
