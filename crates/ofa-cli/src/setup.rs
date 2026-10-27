@@ -52,7 +52,10 @@ pub fn settings_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Some(PathBuf::from(dir).join("settings.json"));
     }
+    #[cfg(windows)]
     let home = std::env::var_os("USERPROFILE")?;
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".claude").join("settings.json"))
 }
 

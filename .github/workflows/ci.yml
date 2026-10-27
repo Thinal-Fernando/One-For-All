@@ -48,7 +48,7 @@ jobs:
 
       - name: Build the installer
         working-directory: apps/desktop
-        run: npx tauri build
+        run: npx tauri build --bundles nsis
 
       - uses: actions/upload-artifact@v4
         with:
@@ -56,4 +56,39 @@ jobs:
           path: |
             target/release/bundle/nsis/*.exe
             target/release/ofa.exe
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build hook helper
+        working-directory: apps/desktop
+        run: npm run sidecar
+      - name: Type-check the island UI
+        working-directory: apps/desktop
+        run: npm run check
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Build macOS app
+        working-directory: apps/desktop
+        run: npx tauri build --bundles dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ofa-macos
+          path: target/release/bundle/dmg/*.dmg
           if-no-files-found: error

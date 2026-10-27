@@ -1,11 +1,17 @@
 mod api;
+#[cfg(windows)]
 mod focus;
+#[cfg(target_os = "macos")]
+#[path = "focus_macos.rs"]
+mod focus;
+#[cfg(windows)]
 mod fullscreen;
 mod island;
 mod plan;
 mod sessions;
 mod settings;
 mod shortcuts;
+#[cfg(windows)]
 mod topmost;
 mod transcript;
 mod tray;

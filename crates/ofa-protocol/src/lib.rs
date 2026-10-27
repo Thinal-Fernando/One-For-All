@@ -44,11 +44,15 @@ pub fn api_addr() -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, API_PORT))
 }
 
-/// Where the app keeps its secret token: `%APPDATA%\OFA\token`. Only your
-/// Windows user can read that folder. `None` if `APPDATA` isn't set.
+/// Where the app keeps its secret token in the user's application data folder.
 pub fn token_path() -> Option<PathBuf> {
-    let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("OFA").join("token"))
+    #[cfg(target_os = "windows")]
+    let base = PathBuf::from(std::env::var_os("APPDATA")?);
+    #[cfg(target_os = "macos")]
+    let base = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").or_else(|| std::env::var_os("HOME"))?);
+    Some(base.join("OFA").join("token"))
 }
 
 /// Which tool a session belongs to.

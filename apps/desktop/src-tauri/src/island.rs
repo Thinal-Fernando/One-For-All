@@ -19,7 +19,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+#[cfg(windows)]
 use windows::Win32::Foundation::POINT;
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use crate::settings::{self, Edge, IslandSettings};
@@ -47,6 +49,7 @@ const TICK: Duration = Duration::from_millis(33);
 const CLOSE_DELAY: Duration = Duration::from_millis(300);
 
 /// Check for a full-screen app every this many ticks, about 4 times a second.
+#[cfg(windows)]
 const FULLSCREEN_EVERY: u32 = 8;
 
 /// Check the island's position every this many ticks, about once a second.
@@ -189,6 +192,7 @@ pub fn start(app: &AppHandle, window: WebviewWindow) -> tauri::Result<()> {
 
 fn poll(app: AppHandle, window: WebviewWindow) {
     let state = app.state::<IslandState>();
+    #[cfg(windows)]
     let hwnd = match window.hwnd() {
         Ok(hwnd) => Some(hwnd),
         Err(err) => {
@@ -198,9 +202,13 @@ fn poll(app: AppHandle, window: WebviewWindow) {
             None
         }
     };
+    #[cfg(windows)]
     let mut watchdog = hwnd.map(topmost::Watchdog::new);
     let mut hidden = false;
+    #[cfg(windows)]
     let mut full_screen = false;
+    #[cfg(not(windows))]
+    let full_screen = false;
     let mut click_through = true;
     let mut open = false;
     let mut last_inside = Instant::now();
@@ -210,6 +218,7 @@ fn poll(app: AppHandle, window: WebviewWindow) {
         thread::sleep(TICK);
         tick = tick.wrapping_add(1);
 
+        #[cfg(windows)]
         if let Some(watchdog) = &mut watchdog {
             watchdog.tick();
         }
@@ -220,6 +229,7 @@ fn poll(app: AppHandle, window: WebviewWindow) {
             }
         }
 
+        #[cfg(windows)]
         if let Some(hwnd) = hwnd.filter(|_| tick.is_multiple_of(FULLSCREEN_EVERY)) {
             full_screen = fullscreen::in_front_of(hwnd);
         }
@@ -264,16 +274,37 @@ fn cursor_inside(state: &IslandState) -> bool {
     let Some(placement) = *state.placement.lock().unwrap() else {
         return false;
     };
-    let mut point = POINT::default();
-    // SAFETY: GetCursorPos only writes to the POINT we pass in.
-    if unsafe { GetCursorPos(&mut point) }.is_err() {
-        // Fails while a secure desktop (UAC, lock screen) is showing.
-        return false;
-    }
-    // The process is per-monitor DPI aware, so the cursor and the window
-    // origin are both in physical pixels. The hit area is in CSS pixels.
-    let x = f64::from(point.x - placement.origin.x) / placement.scale;
-    let y = f64::from(point.y - placement.origin.y) / placement.scale;
+    #[cfg(windows)]
+    let (x, y) = {
+        let mut point = POINT::default();
+        // SAFETY: GetCursorPos only writes to the POINT we pass in.
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            // Fails while a secure desktop (UAC, lock screen) is showing.
+            return false;
+        }
+        (
+            f64::from(point.x - placement.origin.x) / placement.scale,
+            f64::from(point.y - placement.origin.y) / placement.scale,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let (x, y) = {
+        use core_graphics::event::CGEvent;
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+        let Ok(source) =
+            CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        else {
+            return false;
+        };
+        let Ok(event) = CGEvent::new(source) else {
+            return false;
+        };
+        let point = event.location();
+        (
+            (point.x - f64::from(placement.origin.x)) / placement.scale,
+            (point.y - f64::from(placement.origin.y)) / placement.scale,
+        )
+    };
     state.hit_area.lock().unwrap().contains(x, y)
 }
 
