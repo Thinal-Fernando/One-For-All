@@ -25,6 +25,7 @@ use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use crate::settings::{self, Edge, IslandSettings};
+#[cfg(windows)]
 use crate::{fullscreen, topmost};
 
 /// Label of the single island window, as declared in tauri.conf.json.
