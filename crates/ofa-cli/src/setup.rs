@@ -181,7 +181,7 @@ fn remove_hooks(mut settings: Value) -> Value {
 fn is_ofa_hook(handler: &Value) -> bool {
     let command = handler.get("command").and_then(Value::as_str);
     let is_ofa = command
-        .and_then(|c| Path::new(c).file_name())
+        .and_then(|c| c.rsplit(['/', '\\']).find(|part| !part.is_empty()))
         .is_some_and(|name| name.eq_ignore_ascii_case("ofa.exe"));
     is_ofa && handler.get("args") == Some(&json!(["hook"]))
 }

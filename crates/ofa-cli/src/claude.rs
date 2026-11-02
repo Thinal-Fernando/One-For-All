@@ -115,9 +115,9 @@ pub fn permission_reply(decision: Decision) -> String {
 
 /// "one-for-all" from "C:\Users\me\project\one-for-all".
 fn folder_name(cwd: &str) -> Option<String> {
-    Path::new(cwd)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+    cwd.rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .map(str::to_owned)
 }
 
 /// One short line for the island about what a tool is doing.
