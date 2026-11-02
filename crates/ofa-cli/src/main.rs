@@ -143,16 +143,16 @@ fn run_setup(uninstall: bool, settings: Option<PathBuf>, add_to_path: bool) -> R
     if add_to_path {
         #[cfg(windows)]
         {
-        let dir = exe.parent().ok_or("ofa.exe has no folder")?;
-        let changed = path::run(dir, uninstall)?;
-        match (changed, uninstall) {
-            (true, false) => println!(
-                "Added {} to your PATH; open a new terminal to use `ofa`",
-                dir.display()
-            ),
-            (true, true) => println!("Removed {} from your PATH", dir.display()),
-            (false, _) => println!("Your PATH needed no change"),
-        }
+            let dir = exe.parent().ok_or("ofa.exe has no folder")?;
+            let changed = path::run(dir, uninstall)?;
+            match (changed, uninstall) {
+                (true, false) => println!(
+                    "Added {} to your PATH; open a new terminal to use `ofa`",
+                    dir.display()
+                ),
+                (true, true) => println!("Removed {} from your PATH", dir.display()),
+                (false, _) => println!("Your PATH needed no change"),
+            }
         }
         #[cfg(not(windows))]
         eprintln!("PATH setup is managed by your shell on macOS; add the OFA app's bin folder to PATH manually.");

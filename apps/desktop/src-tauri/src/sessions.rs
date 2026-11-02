@@ -447,7 +447,6 @@ fn is_alive(pid: u32) -> bool {
     }
 }
 
-
 /// How the UI names a session: "claude-code:<id>".
 fn view_id(key: &SessionKey) -> String {
     format!("{}:{}", source_name(key.source), key.id)

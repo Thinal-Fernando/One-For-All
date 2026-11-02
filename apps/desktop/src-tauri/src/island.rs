@@ -291,9 +291,7 @@ fn cursor_inside(state: &IslandState) -> bool {
     let (x, y) = {
         use core_graphics::event::CGEvent;
         use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-        let Ok(source) =
-            CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        else {
+        let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
             return false;
         };
         let Ok(event) = CGEvent::new(source) else {

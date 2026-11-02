@@ -51,7 +51,8 @@ pub fn token_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     let base = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support");
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let base = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").or_else(|| std::env::var_os("HOME"))?);
+    let base =
+        PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").or_else(|| std::env::var_os("HOME"))?);
     Some(base.join("OFA").join("token"))
 }
 
