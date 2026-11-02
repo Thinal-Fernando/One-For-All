@@ -1,5 +1,4 @@
-// Builds ofa.exe and puts it where Tauri bundles it from. Tauri wants the
-// target triple in the file name and installs it next to the app as ofa.exe.
+// Builds the OFA hook helper and places Tauri's target-specific sidecar name.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,5 +12,6 @@ execFileSync("cargo", ["build", "--release", "-p", "ofa-cli"], { cwd: root, stdi
 
 const out = join(desktop, "src-tauri", "binaries");
 mkdirSync(out, { recursive: true });
-copyFileSync(join(root, "target", "release", "ofa.exe"), join(out, `ofa-${triple}.exe`));
-console.log(`sidecar: ofa-${triple}.exe ready`);
+const extension = process.platform === "win32" ? ".exe" : "";
+copyFileSync(join(root, "target", "release", `ofa${extension}`), join(out, `ofa-${triple}${extension}`));
+console.log(`sidecar: ofa-${triple}${extension} ready`);

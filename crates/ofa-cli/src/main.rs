@@ -5,7 +5,12 @@
 
 mod claude;
 mod client;
+#[cfg(windows)]
 mod path;
+#[cfg(windows)]
+mod process;
+#[cfg(unix)]
+#[path = "process_unix.rs"]
 mod process;
 mod setup;
 
@@ -84,7 +89,11 @@ const MAX_LOG_BYTES: u64 = 64 * 1024;
 /// hides a hook's stderr, so without this a failing hook is invisible. The
 /// log is capped, so a closed island adding a line per hook does no harm.
 fn log_hook_error(err: &str) {
-    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("OFA")) else {
+    #[cfg(windows)]
+    let dir = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("OFA"));
+    #[cfg(target_os = "macos")]
+    let dir = std::env::var_os("HOME").map(|d| PathBuf::from(d).join("Library/Logs/OFA"));
+    let Some(dir) = dir else {
         return;
     };
     let path = dir.join("hook-errors.log");
@@ -132,16 +141,21 @@ fn run_setup(uninstall: bool, settings: Option<PathBuf>, add_to_path: bool) -> R
     }
 
     if add_to_path {
-        let dir = exe.parent().ok_or("ofa.exe has no folder")?;
-        let changed = path::run(dir, uninstall)?;
-        match (changed, uninstall) {
-            (true, false) => println!(
-                "Added {} to your PATH; open a new terminal to use `ofa`",
-                dir.display()
-            ),
-            (true, true) => println!("Removed {} from your PATH", dir.display()),
-            (false, _) => println!("Your PATH needed no change"),
+        #[cfg(windows)]
+        {
+            let dir = exe.parent().ok_or("ofa.exe has no folder")?;
+            let changed = path::run(dir, uninstall)?;
+            match (changed, uninstall) {
+                (true, false) => println!(
+                    "Added {} to your PATH; open a new terminal to use `ofa`",
+                    dir.display()
+                ),
+                (true, true) => println!("Removed {} from your PATH", dir.display()),
+                (false, _) => println!("Your PATH needed no change"),
+            }
         }
+        #[cfg(not(windows))]
+        eprintln!("PATH setup is managed by your shell on macOS; add the OFA app's bin folder to PATH manually.");
     }
     Ok(())
 }

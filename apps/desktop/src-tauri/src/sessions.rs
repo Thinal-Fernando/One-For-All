@@ -22,7 +22,9 @@ use ofa_core::{SessionKey, SessionState, Store};
 use ofa_protocol::{Decision, Event, EventKind, Request, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, STILL_ACTIVE};
+#[cfg(windows)]
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -419,6 +421,7 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
 
 /// Whether a process is still running. A process we aren't allowed to query
 /// counts as alive, so a permissions problem never marks a session lost.
+#[cfg(windows)]
 fn is_alive(pid: u32) -> bool {
     // SAFETY: the handle is closed before returning, and GetExitCodeProcess
     // only writes to the u32 we pass in.
@@ -433,6 +436,14 @@ fn is_alive(pid: u32) -> bool {
         let alive = GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
         let _ = CloseHandle(handle);
         alive
+    }
+}
+#[cfg(unix)]
+fn is_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks whether the process exists.
+    unsafe {
+        libc::kill(pid as i32, 0) == 0
+            || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
     }
 }
 
@@ -476,8 +487,14 @@ mod tests {
 
     #[test]
     fn a_finished_process_is_not() {
+        #[cfg(windows)]
         let mut child = std::process::Command::new("cmd")
             .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
             .spawn()
             .unwrap();
         let pid = child.id();
@@ -487,6 +504,7 @@ mod tests {
         assert!(!is_alive(pid));
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_pid_that_was_never_used_is_not() {
         // Windows pids are multiples of 4, so this one can't exist.

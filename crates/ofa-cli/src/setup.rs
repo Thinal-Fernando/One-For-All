@@ -52,7 +52,10 @@ pub fn settings_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Some(PathBuf::from(dir).join("settings.json"));
     }
+    #[cfg(windows)]
     let home = std::env::var_os("USERPROFILE")?;
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".claude").join("settings.json"))
 }
 
@@ -178,7 +181,7 @@ fn remove_hooks(mut settings: Value) -> Value {
 fn is_ofa_hook(handler: &Value) -> bool {
     let command = handler.get("command").and_then(Value::as_str);
     let is_ofa = command
-        .and_then(|c| Path::new(c).file_name())
+        .and_then(|c| c.rsplit(['/', '\\']).find(|part| !part.is_empty()))
         .is_some_and(|name| name.eq_ignore_ascii_case("ofa.exe"));
     is_ofa && handler.get("args") == Some(&json!(["hook"]))
 }

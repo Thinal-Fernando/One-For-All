@@ -134,7 +134,7 @@
       <h2>General</h2>
       <label class="toggle">
         <span>
-          <span class="label">Start with Windows</span>
+          <span class="label">Start at login</span>
           <span class="hint">Opens OFA when you sign in, so the orb is always there.</span>
         </span>
         <input type="checkbox" bind:checked={autostart} onchange={setAutostart} />

@@ -2,8 +2,8 @@
 
 ## The short version
 
-You push a tag such as `v0.2.0`. GitHub builds OFA, signs the installer and
-publishes it as a release. Copies of OFA that people have installed notice the
+You push a tag such as `v0.2.0`. GitHub builds OFA for Windows and macOS,
+signs the update artifacts and publishes them as one release. Copies of OFA that people have installed notice the
 new release, and offer it under Settings > About. When they click **Install and
 restart**, OFA updates itself and starts again.
 
@@ -11,7 +11,7 @@ restart**, OFA updates itself and starts again.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Version | root `Cargo.toml`, `[workspace.package] version` | The one version number. The app, `ofa.exe` and the installer all use it. |
+| Version | root `Cargo.toml`, `[workspace.package] version` | The one version number used by the app, hook helper and platform bundles. |
 | Updater settings | `apps/desktop/src-tauri/tauri.conf.json`, `plugins.updater` | The **public key** and the address OFA asks: `https://github.com/Thinal-Fernando/One-For-All/releases/latest/download/latest.json` |
 | Update checks | `apps/desktop/src-tauri/src/updates.rs` | Asks that address 30 seconds after OFA starts and every 6 hours. Shows the answer in Settings > About and the tray tooltip. Installs only when clicked. |
 | Release-only setting | `apps/desktop/src-tauri/tauri.release.conf.json` | Turns on making signature files. Only releases use it, so everyday builds don't need the key. |
@@ -20,11 +20,12 @@ restart**, OFA updates itself and starts again.
 
 ## What happens when you push `v0.2.0`
 
-1. GitHub starts the **Release** workflow on a Windows machine.
-2. It builds `ofa.exe`, the app and the installer, `OFA_0.2.0_x64-setup.exe`.
+1. GitHub starts the **Release** workflow on Windows, then runs macOS arm64
+   and Intel jobs in sequence.
+2. It builds `ofa.exe`, the Windows installer and a DMG for each Mac architecture.
 3. It signs the installer with your **private key**, taken from the secret
    `TAURI_SIGNING_PRIVATE_KEY`, which gives `OFA_0.2.0_x64-setup.exe.sig`.
-4. It creates the release **OFA v0.2.0** on GitHub with three files:
+4. It creates the release **OFA v0.2.0** on GitHub with the Windows installer, macOS DMG, signatures and updater metadata:
    - `OFA_0.2.0_x64-setup.exe`: what people download the first time
    - `OFA_0.2.0_x64-setup.exe.sig`: the signature
    - `latest.json`: what installed copies read, for example:
@@ -45,11 +46,12 @@ restart**, OFA updates itself and starts again.
 
 5. An installed OFA 0.1.0 reads `latest.json`, sees that 0.2.0 is newer, and
    shows "Version 0.2.0 is ready" in Settings > About.
-6. On **Install and restart**, it downloads the installer and checks the
-   signature against the public key built into it. If the signature doesn't
-   match, it refuses. Otherwise it runs the installer with a small progress
-   bar. The installer updates the files, reconnects Claude Code, and starts OFA
-   again.
+6. On **Install and restart**, Windows downloads the installer and checks the
+   signature against the public key built into it. If the signature does not
+   match, it refuses. Otherwise it runs the installer with a small progress bar.
+   The installer updates the files, reconnects Claude Code, and starts OFA again.
+   macOS users install the DMG from the release; Claude Code hooks are connected
+   with the bundled `ofa setup` helper as described in the main README.
 
 ## The signing key
 
