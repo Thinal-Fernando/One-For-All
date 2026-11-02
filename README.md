@@ -22,8 +22,8 @@ On Windows, uninstall it from Settings > Apps. On macOS, drag OFA from Applicati
 
 ### macOS
 
-Download and open the Apple silicon OFA DMG from GitHub Releases, then drag
-OFA to Applications. Open OFA once;
+Download the matching OFA DMG for your Mac (Apple silicon or Intel) from
+GitHub Releases, open it, and drag OFA to Applications. Open OFA once;
 macOS may ask you to allow OFA to control System Events when you focus a session
 from the island.
 Enable **Start at login** in Settings if you want it to launch automatically.
@@ -53,7 +53,7 @@ docs/                  architecture and design notes
 
 ## Building
 
-Windows builds need Rust (stable, MSVC toolchain), Node 22 and WebView2. macOS builds need Rust (stable), Node 22 and Xcode Command Line Tools.
+Windows builds need Rust (stable, MSVC toolchain), Node 22 and WebView2. macOS builds need Rust (stable), Node 22 and Xcode Command Line Tools; CI builds Apple silicon and Intel bundles.
 
 ```powershell
 cd apps/desktop
@@ -80,7 +80,7 @@ cd apps/desktop
 npx tauri build --no-bundle   # target/release/ofa-desktop.exe
 ```
 
-CI checks both Windows and macOS on every push to `main` and pull request, then uploads the Windows installer and macOS DMG as build artifacts.
+CI checks Windows and both macOS architectures on every push to `main` and pull request, then uploads their installers as build artifacts.
 
 ## Releasing
 

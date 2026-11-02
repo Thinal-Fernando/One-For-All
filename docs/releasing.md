@@ -20,8 +20,9 @@ restart**, OFA updates itself and starts again.
 
 ## What happens when you push `v0.2.0`
 
-1. GitHub starts the **Release** workflow on Windows, then runs the macOS job.
-2. It builds `ofa.exe`, the Windows app and installer, plus a macOS app DMG.
+1. GitHub starts the **Release** workflow on Windows, then runs macOS arm64
+   and Intel jobs in sequence.
+2. It builds `ofa.exe`, the Windows installer and a DMG for each Mac architecture.
 3. It signs the installer with your **private key**, taken from the secret
    `TAURI_SIGNING_PRIVATE_KEY`, which gives `OFA_0.2.0_x64-setup.exe.sig`.
 4. It creates the release **OFA v0.2.0** on GitHub with the Windows installer, macOS DMG, signatures and updater metadata:
